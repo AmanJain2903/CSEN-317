@@ -1,0 +1,10 @@
+node_id: 3
+host: 0.0.0.0
+port: 5003
+seed_nodes:
+  - { node_id: 1, host: "chat_node1", port: 5001 }
+  - { node_id: 2, host: "chat_node2", port: 5002 }
+heartbeat_interval_ms: 800
+leader_timeout_ms: 2500
+log_dir: "/data/logs"
+

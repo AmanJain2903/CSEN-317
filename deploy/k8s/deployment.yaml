@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: chat-node
+  namespace: default
+spec:
+  serviceName: chat-service
+  replicas: 3
+  selector:
+    matchLabels:
+      app: chat-node
+  template:
+    metadata:
+      labels:
+        app: chat-node
+    spec:
+      containers:
+      - name: chat-node
+        image: distributed-chat:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5001
+          name: chat
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Extract node ID from pod name (chat-node-0 -> 1, chat-node-1 -> 2, etc.)
+          NODE_ID=$((${POD_NAME##*-} + 1))
+          
+          # Create node-specific config
+          cat > /tmp/node_config.yml <<EOF
+          node_id: $NODE_ID
+          host: 0.0.0.0
+          port: 5001
+          seed_nodes:
+            - { node_id: 1, host: "chat-node-0.chat-service.default.svc.cluster.local", port: 5001 }
+            - { node_id: 2, host: "chat-node-1.chat-service.default.svc.cluster.local", port: 5001 }
+            - { node_id: 3, host: "chat-node-2.chat-service.default.svc.cluster.local", port: 5001 }
+          heartbeat_interval_ms: 800
+          leader_timeout_ms: 2500
+          log_dir: "/data/logs"
+          EOF
+          
+          # Start the node
+          python -m src.node --config /tmp/node_config.yml
+        volumeMounts:
+        - name: data
+          mountPath: /data/logs
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+
