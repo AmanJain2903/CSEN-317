@@ -78,15 +78,22 @@ async def test_election_with_higher_peers():
     
     election.set_callbacks(on_become_leader, on_new_coordinator)
     
-    # Simulate receiving OK from higher peer
-    election.received_ok = True
-    
     # Reduce timeout for faster testing
     election.election_timeout = 0.1
     
-    # Start election - should not become leader since higher peer responded
-    result = await election.start_election(transport, membership)
+    # Start election in background
+    election_task = asyncio.create_task(
+        election.start_election(transport, membership)
+    )
     
+    # Simulate receiving OK from higher peer during election
+    await asyncio.sleep(0.05)
+    election.received_ok = True
+    
+    # Wait for election to complete
+    result = await election_task
+    
+    # Should not become leader since higher peer responded
     assert result is False
     assert became_leader is False
 
@@ -148,11 +155,13 @@ async def test_coordinator_announcement():
     
     election.set_callbacks(on_become_leader, on_new_coordinator)
     
-    # Create COORDINATOR message
+    # Create COORDINATOR message with peer info
+    leader_peer = PeerInfo(3, "localhost", 5003)
     msg = Message(
         type=MessageType.COORDINATOR,
         sender_id=3,
-        term=5
+        term=5,
+        membership=[leader_peer.to_dict()]
     )
     
     await election.handle_coordinator_message(msg, membership)
@@ -161,4 +170,71 @@ async def test_coordinator_announcement():
     assert election.current_term == 5
     assert new_coordinator_id == 3
     assert new_term == 5
+    # Verify leader peer was added to membership
+    leader = membership.get_leader()
+    assert leader is not None
+    assert leader.node_id == 3
+
+
+@pytest.mark.asyncio
+async def test_election_cancelled_by_coordinator():
+    """Test that ongoing election is cancelled when COORDINATOR arrives."""
+    election = ElectionManager(node_id=2)
+    
+    membership = MembershipManager(
+        node_id=2,
+        host="localhost",
+        port=5002,
+        seed_nodes=[]
+    )
+    membership.add_peer(PeerInfo(3, "localhost", 5003))
+    
+    # Mock transport
+    transport = MagicMock()
+    transport.send_to = AsyncMock(return_value=True)
+    transport.broadcast = AsyncMock()
+    
+    became_leader = False
+    received_coordinator = False
+    
+    async def on_become_leader(term):
+        nonlocal became_leader
+        became_leader = True
+    
+    async def on_new_coordinator(leader_id, term):
+        nonlocal received_coordinator
+        received_coordinator = True
+    
+    election.set_callbacks(on_become_leader, on_new_coordinator)
+    
+    # Reduce timeout for faster testing
+    election.election_timeout = 0.2
+    
+    # Start election in background
+    election_task = asyncio.create_task(
+        election.start_election(transport, membership)
+    )
+    
+    # Wait a bit then send COORDINATOR
+    await asyncio.sleep(0.05)
+    
+    leader_peer = PeerInfo(3, "localhost", 5003)
+    coordinator_msg = Message(
+        type=MessageType.COORDINATOR,
+        sender_id=3,
+        term=2,
+        membership=[leader_peer.to_dict()]
+    )
+    
+    await election.handle_coordinator_message(coordinator_msg, membership)
+    
+    # Wait for election to complete
+    result = await election_task
+    
+    # Election should be cancelled, node should not become leader
+    assert result is False
+    assert became_leader is False
+    assert received_coordinator is True
+    assert membership.leader_id == 3
+
 
