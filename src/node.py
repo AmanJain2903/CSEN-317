@@ -184,18 +184,8 @@ class ChatNode:
             await self._handle_chat(message)
         
         elif msg_type == MessageType.SEQ_CHAT:
-            delivered = await self.ordering.handle_seq_chat(message)
-            if delivered:
-                # Store the delivered message
-                chat_msg = ChatMessage(
-                    seq_no=message.seq_no or 0,
-                    term=message.term,
-                    msg_id=message.msg_id or "",
-                    sender_id=message.sender_id,
-                    room_id=message.room_id,
-                    text=message.payload or "",
-                )
-                await self.storage.append_message(chat_msg)
+            # Just deliver, storage happens in _on_deliver_message callback
+            await self.ordering.handle_seq_chat(message)
         
         elif msg_type == MessageType.CATCHUP_REQ:
             await self._handle_catchup_req(message)
@@ -294,10 +284,8 @@ class ChatNode:
                 term=self.current_term,
             )
             
-            # Store first
-            await self.storage.append_message(chat_msg)
-            
             # Broadcast SEQ_CHAT to all peers (including self-delivery)
+            # Storage happens in _on_deliver_message callback when delivered
             seq_chat_msg = Message(
                 type=MessageType.SEQ_CHAT,
                 sender_id=message.sender_id,
