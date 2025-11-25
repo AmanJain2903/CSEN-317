@@ -32,16 +32,21 @@ class ChatNode:
         self.host = self.config['host']
         self.port = self.config['port']
         
+        # For local testing: if binding to 0.0.0.0, advertise 127.0.0.1 to peers
+        advertise_host = self.host if self.host != '0.0.0.0' else '127.0.0.1'
+        
         # Setup logging
         self._setup_logging()
         self.logger = logging.getLogger(f"node.{self.node_id}")
         self.logger.info(f"Initializing node_{self.node_id} on {self.host}:{self.port}")
+        if advertise_host != self.host:
+            self.logger.info(f"  Advertising to peers as {advertise_host}:{self.port}")
         
         # Initialize components
         self.transport = TransportLayer(self.host, self.port, self.node_id)
         self.membership = MembershipManager(
             self.node_id,
-            self.host,
+            advertise_host,  # Use advertise_host instead of self.host
             self.port,
             self.config.get('seed_nodes', [])
         )
@@ -110,20 +115,9 @@ class ChatNode:
             
             # Check if we found a leader
             leader = self.membership.get_leader()
+            other_peers = self.membership.get_other_peers()
             
-            if leader is None:
-                # No leader found - check if we're alone or have peers
-                other_peers = self.membership.get_other_peers()
-                
-                if len(other_peers) == 0:
-                    # We're alone - become leader immediately
-                    self.logger.info("No other peers found, starting election to become leader")
-                    await self.election.start_election(self.transport, self.membership)
-                else:
-                    # Peers exist but no leader - trigger election
-                    self.logger.info(f"Found {len(other_peers)} peers but no leader, starting election")
-                    await self.election.start_election(self.transport, self.membership)
-            else:
+            if leader:
                 # Found existing leader, request catch-up
                 self.logger.info(f"Found existing leader: node_{leader.node_id}")
                 await self.ordering.request_catchup(
@@ -131,6 +125,20 @@ class ChatNode:
                     leader,
                     self.current_term
                 )
+            else:
+                # No leader found - check if we're alone or have peers
+                if len(other_peers) == 0:
+                    # We're truly alone - become leader immediately
+                    self.logger.info("No other peers found, starting election to become leader")
+                    await self.election.start_election(self.transport, self.membership)
+                else:
+                    # Peers exist but no leader announced yet
+                    # Don't rush to election - leader might announce soon
+                    # or failure detector will trigger election if truly no leader
+                    self.logger.info(
+                        f"Found {len(other_peers)} peers but no leader yet. "
+                        f"Waiting for leader announcement or timeout."
+                    )
         
         self.logger.info(
             f"Node started: role={self.role.value}, "
@@ -150,6 +158,9 @@ class ChatNode:
         # Handle different message types
         if msg_type == MessageType.JOIN:
             await self._handle_join(message, conn)
+        
+        elif msg_type == MessageType.JOIN_ACK:
+            await self._handle_join_ack(message)
         
         elif msg_type == MessageType.HEARTBEAT:
             self.failure.record_heartbeat(message.term)
@@ -204,9 +215,16 @@ class ChatNode:
             term=self.current_term,
             membership=self.membership.get_membership_list(),
         )
-        await conn.send(join_ack)
         
-        self.logger.info(f"Sent JOIN_ACK to node_{sender_id}")
+        # Send JOIN_ACK to the sender's server (not through this connection)
+        sender_peer = self.membership.get_peer(sender_id)
+        if sender_peer:
+            await self.transport.send_to(sender_peer.host, sender_peer.port, join_ack)
+            self.logger.info(f"Sent JOIN_ACK to node_{sender_id}")
+        else:
+            # Fallback: try to send through the existing connection
+            await conn.send(join_ack)
+            self.logger.info(f"Sent JOIN_ACK to node_{sender_id} via connection")
         
         # If we're the leader, immediately announce it to the new node
         if self.role == NodeRole.LEADER:
@@ -224,6 +242,18 @@ class ChatNode:
                     self.logger.info(f"Sent COORDINATOR to joining node_{sender_id}")
                 except Exception as e:
                     self.logger.warning(f"Failed to send COORDINATOR to node_{sender_id}: {e}")
+    
+    async def _handle_join_ack(self, message: Message):
+        """Handle JOIN_ACK response containing membership list."""
+        sender_id = message.sender_id
+        self.logger.info(f"Received JOIN_ACK from node_{sender_id}")
+        
+        # Update our membership with the list from the responder
+        if message.membership:
+            self.membership.update_from_membership_list(message.membership)
+            self.logger.info(
+                f"Updated membership from JOIN_ACK, now have {len(self.membership.peers)} total peers"
+            )
     
     async def _handle_chat(self, message: Message):
         """Handle a CHAT message from a client or follower."""
