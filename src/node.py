@@ -32,16 +32,21 @@ class ChatNode:
         self.host = self.config['host']
         self.port = self.config['port']
         
+        # For local testing: if binding to 0.0.0.0, advertise 127.0.0.1 to peers
+        advertise_host = self.host if self.host != '0.0.0.0' else '127.0.0.1'
+        
         # Setup logging
         self._setup_logging()
         self.logger = logging.getLogger(f"node.{self.node_id}")
         self.logger.info(f"Initializing node_{self.node_id} on {self.host}:{self.port}")
+        if advertise_host != self.host:
+            self.logger.info(f"  Advertising to peers as {advertise_host}:{self.port}")
         
         # Initialize components
         self.transport = TransportLayer(self.host, self.port, self.node_id)
         self.membership = MembershipManager(
             self.node_id,
-            self.host,
+            advertise_host,  # Use advertise_host instead of self.host
             self.port,
             self.config.get('seed_nodes', [])
         )
@@ -105,14 +110,35 @@ class ChatNode:
             # Start as follower
             await self.failure.start_heartbeat_monitor()
             
-            # If we know the leader, request catch-up
+            # Wait briefly for any COORDINATOR messages to arrive
+            await asyncio.sleep(2.0)
+            
+            # Check if we found a leader
             leader = self.membership.get_leader()
+            other_peers = self.membership.get_other_peers()
+            
             if leader:
+                # Found existing leader, request catch-up
+                self.logger.info(f"Found existing leader: node_{leader.node_id}")
                 await self.ordering.request_catchup(
                     self.transport,
                     leader,
                     self.current_term
                 )
+            else:
+                # No leader found - check if we're alone or have peers
+                if len(other_peers) == 0:
+                    # We're truly alone - become leader immediately
+                    self.logger.info("No other peers found, starting election to become leader")
+                    await self.election.start_election(self.transport, self.membership)
+                else:
+                    # Peers exist but no leader announced yet
+                    # Don't rush to election - leader might announce soon
+                    # or failure detector will trigger election if truly no leader
+                    self.logger.info(
+                        f"Found {len(other_peers)} peers but no leader yet. "
+                        f"Waiting for leader announcement or timeout."
+                    )
         
         self.logger.info(
             f"Node started: role={self.role.value}, "
@@ -133,6 +159,9 @@ class ChatNode:
         if msg_type == MessageType.JOIN:
             await self._handle_join(message, conn)
         
+        elif msg_type == MessageType.JOIN_ACK:
+            await self._handle_join_ack(message)
+        
         elif msg_type == MessageType.HEARTBEAT:
             self.failure.record_heartbeat(message.term)
             # Update term if necessary
@@ -148,24 +177,15 @@ class ChatNode:
             self.election.handle_election_ok(message)
         
         elif msg_type == MessageType.COORDINATOR:
+            self.logger.info(f"Dispatching COORDINATOR from node_{message.sender_id} to election handler")
             await self.election.handle_coordinator_message(message, self.membership)
         
         elif msg_type == MessageType.CHAT:
             await self._handle_chat(message)
         
         elif msg_type == MessageType.SEQ_CHAT:
-            delivered = await self.ordering.handle_seq_chat(message)
-            if delivered:
-                # Store the delivered message
-                chat_msg = ChatMessage(
-                    seq_no=message.seq_no or 0,
-                    term=message.term,
-                    msg_id=message.msg_id or "",
-                    sender_id=message.sender_id,
-                    room_id=message.room_id,
-                    text=message.payload or "",
-                )
-                await self.storage.append_message(chat_msg)
+            # Just deliver, storage happens in _on_deliver_message callback
+            await self.ordering.handle_seq_chat(message)
         
         elif msg_type == MessageType.CATCHUP_REQ:
             await self._handle_catchup_req(message)
@@ -186,12 +206,75 @@ class ChatNode:
             term=self.current_term,
             membership=self.membership.get_membership_list(),
         )
-        await conn.send(join_ack)
         
-        self.logger.info(f"Sent JOIN_ACK to node_{sender_id}")
+        # Send JOIN_ACK to the sender's server (not through this connection)
+        sender_peer = self.membership.get_peer(sender_id)
+        if sender_peer:
+            await self.transport.send_to(sender_peer.host, sender_peer.port, join_ack)
+            self.logger.info(f"Sent JOIN_ACK to node_{sender_id}")
+        else:
+            # Fallback: try to send through the existing connection
+            await conn.send(join_ack)
+            self.logger.info(f"Sent JOIN_ACK to node_{sender_id} via connection")
+        
+        # If we're the leader, immediately announce it to the new node
+        if self.role == NodeRole.LEADER:
+            # Include own peer info so joiner knows how to contact the leader
+            self_peer = self.membership.get_peer(self.node_id)
+            membership_list = [self_peer.to_dict()] if self_peer else []
+            
+            coordinator_msg = Message(
+                type=MessageType.COORDINATOR,
+                sender_id=self.node_id,
+                term=self.current_term,
+                membership=membership_list,
+            )
+            
+            # Send to the joining node
+            peer = self.membership.get_peer(sender_id)
+            if peer:
+                try:
+                    await self.transport.send_to(peer.host, peer.port, coordinator_msg)
+                    self.logger.info(f"Sent COORDINATOR to joining node_{sender_id}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to send COORDINATOR to node_{sender_id}: {e}")
+        else:
+            # If we're a follower but know the leader, inform the joiner
+            leader = self.membership.get_leader()
+            if leader:
+                # Include leader's peer info so joiner knows who the leader is
+                coordinator_msg = Message(
+                    type=MessageType.COORDINATOR,
+                    sender_id=leader.node_id,
+                    term=self.current_term,
+                    membership=[leader.to_dict()],
+                )
+                
+                # Send to the joining node
+                peer = self.membership.get_peer(sender_id)
+                if peer:
+                    try:
+                        await self.transport.send_to(peer.host, peer.port, coordinator_msg)
+                        self.logger.info(f"Informed joining node_{sender_id} about leader node_{leader.node_id}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to inform node_{sender_id} about leader: {e}")
+    
+    async def _handle_join_ack(self, message: Message):
+        """Handle JOIN_ACK response containing membership list."""
+        sender_id = message.sender_id
+        self.logger.info(f"Received JOIN_ACK from node_{sender_id}")
+        
+        # Update our membership with the list from the responder
+        if message.membership:
+            self.membership.update_from_membership_list(message.membership)
+            self.logger.info(
+                f"Updated membership from JOIN_ACK, now have {len(self.membership.peers)} total peers"
+            )
     
     async def _handle_chat(self, message: Message):
         """Handle a CHAT message from a client or follower."""
+        self.logger.debug(f"Handling CHAT message, role={self.role}, leader_id={self.membership.leader_id}")
+        
         if self.role == NodeRole.LEADER:
             # Leader assigns sequence number and broadcasts
             chat_msg = self.ordering.assign_sequence_number(
@@ -201,10 +284,8 @@ class ChatNode:
                 term=self.current_term,
             )
             
-            # Store first
-            await self.storage.append_message(chat_msg)
-            
             # Broadcast SEQ_CHAT to all peers (including self-delivery)
+            # Storage happens in _on_deliver_message callback when delivered
             seq_chat_msg = Message(
                 type=MessageType.SEQ_CHAT,
                 sender_id=message.sender_id,
@@ -279,6 +360,9 @@ class ChatNode:
     
     async def _on_deliver_message(self, chat_msg: ChatMessage):
         """Called when a message is delivered in order."""
+        # Store message to disk
+        await self.storage.append_message(chat_msg)
+        
         # Print to console for visibility
         print(
             f"[seq={chat_msg.seq_no}] node_{chat_msg.sender_id}: {chat_msg.text}"

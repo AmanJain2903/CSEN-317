@@ -115,6 +115,10 @@ class OrderingManager:
         self.delivered[(chat_msg.seq_no, chat_msg.term)] = True
         self.next_expected_seq = chat_msg.seq_no + 1
         
+        # Update last_seq to track highest sequence number seen
+        # This is crucial for followers that may become leaders
+        self.last_seq = max(self.last_seq, chat_msg.seq_no)
+        
         # Callback
         if self.on_deliver:
             await self.on_deliver(chat_msg)
