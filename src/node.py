@@ -105,9 +105,27 @@ class ChatNode:
             # Start as follower
             await self.failure.start_heartbeat_monitor()
             
-            # If we know the leader, request catch-up
+            # Wait briefly for any COORDINATOR messages to arrive
+            await asyncio.sleep(2.0)
+            
+            # Check if we found a leader
             leader = self.membership.get_leader()
-            if leader:
+            
+            if leader is None:
+                # No leader found - check if we're alone or have peers
+                other_peers = self.membership.get_other_peers()
+                
+                if len(other_peers) == 0:
+                    # We're alone - become leader immediately
+                    self.logger.info("No other peers found, starting election to become leader")
+                    await self.election.start_election(self.transport, self.membership)
+                else:
+                    # Peers exist but no leader - trigger election
+                    self.logger.info(f"Found {len(other_peers)} peers but no leader, starting election")
+                    await self.election.start_election(self.transport, self.membership)
+            else:
+                # Found existing leader, request catch-up
+                self.logger.info(f"Found existing leader: node_{leader.node_id}")
                 await self.ordering.request_catchup(
                     self.transport,
                     leader,
@@ -189,6 +207,23 @@ class ChatNode:
         await conn.send(join_ack)
         
         self.logger.info(f"Sent JOIN_ACK to node_{sender_id}")
+        
+        # If we're the leader, immediately announce it to the new node
+        if self.role == NodeRole.LEADER:
+            coordinator_msg = Message(
+                type=MessageType.COORDINATOR,
+                sender_id=self.node_id,
+                term=self.current_term
+            )
+            
+            # Send to the joining node
+            peer = self.membership.get_peer(sender_id)
+            if peer:
+                try:
+                    await self.transport.send_to(peer.host, peer.port, coordinator_msg)
+                    self.logger.info(f"Sent COORDINATOR to joining node_{sender_id}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to send COORDINATOR to node_{sender_id}: {e}")
     
     async def _handle_chat(self, message: Message):
         """Handle a CHAT message from a client or follower."""
