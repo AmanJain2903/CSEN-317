@@ -248,6 +248,26 @@ class ChatNode:
                     self.logger.info(f"Sent COORDINATOR to joining node_{sender_id}")
                 except Exception as e:
                     self.logger.warning(f"Failed to send COORDINATOR to node_{sender_id}: {e}")
+        else:
+            # If we're a follower but know the leader, inform the joiner
+            leader = self.membership.get_leader()
+            if leader:
+                # Include leader's peer info so joiner knows who the leader is
+                coordinator_msg = Message(
+                    type=MessageType.COORDINATOR,
+                    sender_id=leader.node_id,
+                    term=self.current_term,
+                    membership=[leader.to_dict()],
+                )
+                
+                # Send to the joining node
+                peer = self.membership.get_peer(sender_id)
+                if peer:
+                    try:
+                        await self.transport.send_to(peer.host, peer.port, coordinator_msg)
+                        self.logger.info(f"Informed joining node_{sender_id} about leader node_{leader.node_id}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to inform node_{sender_id} about leader: {e}")
     
     async def _handle_join_ack(self, message: Message):
         """Handle JOIN_ACK response containing membership list."""
