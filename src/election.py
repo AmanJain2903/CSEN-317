@@ -77,6 +77,11 @@ class ElectionManager:
             self.election_in_progress = False
             return False
         
+        # Check if election was cancelled (e.g., received COORDINATOR)
+        if not self.election_in_progress:
+            self.logger.info("Election cancelled, coordinator already announced")
+            return False
+        
         # Check if we received any OK responses
         if not self.received_ok:
             # No responses from higher priority nodes, we win
@@ -137,7 +142,21 @@ class ElectionManager:
         # Accept the new coordinator if term is valid
         if new_term >= self.current_term:
             self.current_term = new_term
+            
+            # Cancel any ongoing election - we have a winner
+            if self.election_in_progress:
+                self.logger.info("Cancelling ongoing election, coordinator announced")
+                self.election_in_progress = False
+            
             membership.set_leader(new_leader_id)
+            
+            # Update membership with leader's peer info if provided
+            if message.membership:
+                from .common import PeerInfo
+                for peer_dict in message.membership:
+                    peer = PeerInfo.from_dict(peer_dict)
+                    membership.add_peer(peer)
+                self.logger.info(f"Updated membership from COORDINATOR, leader peer info added")
             
             if self.on_new_coordinator:
                 await self.on_new_coordinator(new_leader_id, new_term)
@@ -148,11 +167,16 @@ class ElectionManager:
         
         membership.set_leader(self.node_id)
         
-        # Broadcast COORDINATOR message
+        # Include own peer info in COORDINATOR so followers can contact the new leader
+        self_peer = membership.get_peer(self.node_id)
+        membership_list = [self_peer.to_dict()] if self_peer else []
+        
+        # Broadcast COORDINATOR message with peer info
         coordinator_msg = Message(
             type=MessageType.COORDINATOR,
             sender_id=self.node_id,
             term=self.current_term,
+            membership=membership_list,
         )
         
         peers = membership.get_other_peers()

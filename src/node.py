@@ -177,6 +177,7 @@ class ChatNode:
             self.election.handle_election_ok(message)
         
         elif msg_type == MessageType.COORDINATOR:
+            self.logger.info(f"Dispatching COORDINATOR from node_{message.sender_id} to election handler")
             await self.election.handle_coordinator_message(message, self.membership)
         
         elif msg_type == MessageType.CHAT:
@@ -228,10 +229,15 @@ class ChatNode:
         
         # If we're the leader, immediately announce it to the new node
         if self.role == NodeRole.LEADER:
+            # Include own peer info so joiner knows how to contact the leader
+            self_peer = self.membership.get_peer(self.node_id)
+            membership_list = [self_peer.to_dict()] if self_peer else []
+            
             coordinator_msg = Message(
                 type=MessageType.COORDINATOR,
                 sender_id=self.node_id,
-                term=self.current_term
+                term=self.current_term,
+                membership=membership_list,
             )
             
             # Send to the joining node
@@ -257,6 +263,8 @@ class ChatNode:
     
     async def _handle_chat(self, message: Message):
         """Handle a CHAT message from a client or follower."""
+        self.logger.debug(f"Handling CHAT message, role={self.role}, leader_id={self.membership.leader_id}")
+        
         if self.role == NodeRole.LEADER:
             # Leader assigns sequence number and broadcasts
             chat_msg = self.ordering.assign_sequence_number(
@@ -344,6 +352,9 @@ class ChatNode:
     
     async def _on_deliver_message(self, chat_msg: ChatMessage):
         """Called when a message is delivered in order."""
+        # Store message to disk
+        await self.storage.append_message(chat_msg)
+        
         # Print to console for visibility
         print(
             f"[seq={chat_msg.seq_no}] node_{chat_msg.sender_id}: {chat_msg.text}"
