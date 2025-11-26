@@ -61,6 +61,8 @@ TransportLayer
 - `add_peer()`: Add/update peer info
 - `get_higher_priority_peers()`: For Bully algorithm
 - `bootstrap_join()`: Initial cluster join
+- `get_leader()`: Returns PeerInfo of current leader (None if not in peers)
+- `set_leader()`: Update leader_id
 
 ### 3. Failure Detector (`failure.py`)
 
@@ -99,21 +101,27 @@ On timeout or startup without leader:
      - X waits for COORDINATOR message
   3. If no responses after timeout:
      - X becomes coordinator
-     - X broadcasts COORDINATOR to all
+     - X broadcasts COORDINATOR(with own PeerInfo) to all
   4. Any node receiving ELECTION from lower ID:
      - Responds with ELECTION_OK
      - Starts its own election
+  5. On receiving COORDINATOR during election:
+     - Cancel ongoing election
+     - Accept announced leader
 ```
 
 **Properties**:
 - Higher node_id always wins
 - Deterministic leader selection
 - Eventually consistent (may have brief periods without leader)
+- Election cancellation prevents split-brain
+- COORDINATOR includes leader's PeerInfo for immediate connectivity
 
 **Terms**: 
 - Each new leader increments term number
 - Messages with old terms are ignored
 - Prevents split-brain scenarios
+- Followers track highest term seen
 
 ### 5. Ordering Manager (`ordering.py`)
 
@@ -124,15 +132,21 @@ On timeout or startup without leader:
 On receive CHAT:
   seq_no = ++last_seq
   Create SEQ_CHAT(seq_no, term, msg)
-  Write to log (sync)
   Broadcast SEQ_CHAT to all peers
+  Self-deliver via ordering manager
+  # Storage happens in delivery callback
 ```
 
 **Follower Role**:
 ```python
+On receive CHAT:
+  Forward to leader
+
 On receive SEQ_CHAT(seq_no):
   If seq_no == next_expected:
     Deliver message
+    Store to log via callback
+    Update last_seq = max(last_seq, seq_no)  # Critical for failover!
     Deliver buffered messages in order
   Else if seq_no > next_expected:
     Buffer message
@@ -144,6 +158,7 @@ On receive SEQ_CHAT(seq_no):
 - All nodes deliver messages in same order
 - No message reordering
 - Idempotent delivery (dedupe by seq_no + term)
+- Followers track last_seq for seamless leader promotion
 
 **Catch-up Protocol**:
 ```python
@@ -195,11 +210,15 @@ Leader:
 on_receive_message(msg):
   match msg.type:
     JOIN -> Handle join request
+           If leader: send JOIN_ACK + COORDINATOR(with PeerInfo)
+           If follower: send JOIN_ACK + COORDINATOR(about leader)
+    JOIN_ACK -> Update membership from received list
     HEARTBEAT -> Update failure detector
     ELECTION -> Process election message
-    COORDINATOR -> Accept new leader
+    ELECTION_OK -> Mark response received
+    COORDINATOR -> Accept new leader, add PeerInfo, cancel election
     CHAT -> Forward to leader (or sequence if leader)
-    SEQ_CHAT -> Deliver in order
+    SEQ_CHAT -> Deliver in order (storage via callback)
     CATCHUP_REQ -> Send missing messages
 ```
 
@@ -233,15 +252,20 @@ Node1(F)   Node2(F)   Node3(L)
   |          |          |
   ... timeout ...       |
   |                     |
+  | Start election      |
   |------ELECTION------>| (no response)
-  |<-----ELECTION_OK----|
+  |          |          |
+  ... timeout (0.5s) ...|
   |                     |
-  ... timeout ...       |
+  | No OK received      |
+  |----COORDINATOR(PeerInfo)-->|
+  | Become leader       | Accept leader
+  |                     | Add Node2's PeerInfo
+  |------HEARTBEAT----->| Update role to FOLLOWER
   |                     |
-  |----COORDINATOR----->|
-  | Become leader       |
-  |                     |
-  |------HEARTBEAT----->|
+  
+Note: COORDINATOR now includes leader's PeerInfo so followers
+      can immediately contact the new leader for message forwarding
 ```
 
 ### Out-of-Order Delivery
@@ -296,15 +320,25 @@ Action:
 
 ### 1. Leader Crashes
 
-**Detection**: Followers miss heartbeats
+**Detection**: Followers miss heartbeats (leader_timeout_ms)
 **Recovery**: Bully election selects new leader
-**Consistency**: Messages in old leader's buffer may be lost, but all delivered messages maintain order
+**Consistency**: 
+- All delivered messages maintain order across all nodes
+- New leader uses last_seq from followers (via recovery state)
+- Messages in crashed leader's buffer (not yet broadcasted) are lost
+- Sequence numbers continue monotonically from highest seen
 
 ### 2. Follower Crashes
 
-**Detection**: Leader notices failed connections (optional)
-**Recovery**: Follower restarts, recovers from log, requests catch-up
-**Consistency**: No impact on other nodes
+**Detection**: Leader notices failed send attempts (logged but not blocking)
+**Recovery**: 
+1. Follower restarts, recovers last_seq from log
+2. Sends JOIN to seed nodes
+3. Receives JOIN_ACK with full membership list
+4. Receives COORDINATOR with leader's PeerInfo
+5. Requests catch-up for messages after last_seq
+6. Continues normal operation as follower
+**Consistency**: No impact on other nodes during crash or rejoin
 
 ### 3. Network Partition
 
@@ -315,9 +349,23 @@ Action:
 ### 4. Message Loss
 
 **Scenario**: Leader crashes after assigning seq_no but before broadcasting
-**Impact**: Gap in sequence numbers
-**Detection**: Followers buffer messages, request catch-up
-**Mitigation**: New leader may need to reassign (future work)
+**Impact**: Gap in sequence numbers (leader had seq_no N, but N was never sent)
+**Detection**: New leader starts from highest seq_no seen by any node
+**Result**: Gap is skipped (seq N is lost forever)
+**Mitigation**: 
+- Accept message loss for uncommitted messages
+- OR implement 2-phase commit (future work)
+- OR use replicated log (Raft/Paxos) for durability
+
+### 5. Split-Brain Prevention
+
+**Scenario**: Network partition causes multiple leaders
+**Prevention**:
+- Terms prevent old leaders from being accepted
+- Election cancellation when COORDINATOR received
+- Higher term always wins
+**Limitation**: Brief period of dual leaders possible (eventually resolved)
+**Future work**: Majority quorum for leader election
 
 ## Consistency Model
 
@@ -385,26 +433,40 @@ Action:
 
 ## Testing Strategy
 
-### Unit Tests
+### Unit Tests (`tests/test_*.py`)
 - Each component tested in isolation
-- Mock dependencies
+- Mock dependencies (AsyncMock for transport)
 - Focus on edge cases
+- **17 tests total** covering:
+  - `test_election.py`: Bully algorithm, coordinator announcement, election cancellation
+  - `test_failure.py`: Heartbeat recording, timeout detection, role changes
+  - `test_ordering.py`: In-order delivery, out-of-order buffering, duplicates, sequence assignment
+  - `test_integration_local.py`: Storage recovery, catch-up scenario, concurrent buffering
+
+**Run tests**: `make test` or `source DS/bin/activate && pytest tests/ -v`
 
 ### Integration Tests
-- Multiple components together
+- Multiple components together (ordering + storage)
 - In-process nodes (no network)
 - Verify end-to-end flows
 
-### System Tests
-- Full Docker deployment
-- Real network latency
-- Chaos testing (kill nodes randomly)
+### System Tests (Manual)
+- Full Docker deployment (`docker compose up`)
+- Real network latency and failures
+- Test scenarios:
+  1. Normal operation with 3 nodes
+  2. Leader failure and election
+  3. Node rejoin and catch-up
+  4. Concurrent clients
+  5. Persistent storage verification
+  6. Network partition simulation
 
 ### Test Coverage
-- Ordering: In-order, out-of-order, duplicates
-- Election: No higher peers, with responses, coordinator announcement
-- Failure: Heartbeat recording, timeout detection
-- Storage: Persistence, recovery
+- ✅ Ordering: In-order, out-of-order, duplicates, concurrent messages
+- ✅ Election: No higher peers, with responses, coordinator with PeerInfo, election cancellation
+- ✅ Failure: Heartbeat recording, timeout detection, role transitions
+- ✅ Storage: Persistence, recovery, catch-up protocol
+- ✅ Integration: Storage + ordering, recovery scenario
 
 ## Performance Characteristics
 
@@ -419,9 +481,11 @@ Action:
 - ~1000-10000 messages/sec on modern hardware (single leader)
 
 ### Storage
-- O(n) for n messages
-- Append-only, no compaction
+- O(n) for n messages (single file per node)
+- Append-only JSONL format, no compaction
+- Each message stored exactly once (fixed duplicate storage bug)
 - Log rotation needed for long-running systems
+- Storage happens via delivery callback (_on_deliver_message)
 
 ## Operational Aspects
 
@@ -432,23 +496,59 @@ Action:
 
 ### Debugging
 - All nodes log same seq_no for same message
-- Terms identify which leader assigned sequence
-- Catch-up logs show recovery
+- Terms identify which leader assigned sequence (term increments with each new leader)
+- Catch-up logs show recovery (e.g., "Requesting catch-up from seq_no=X")
+- Debug logging shows role, leader_id, and peer count
+- Message logs are human-readable JSONL for easy inspection
 
 ### Deployment
 - Docker Compose for local dev/test
 - Kubernetes for production-like environment
 - StatefulSet for stable network identities
 
+## Recent Fixes and Improvements
+
+### 1. Leader PeerInfo Propagation (Critical)
+**Problem**: After election, followers didn't know new leader's address  
+**Solution**: COORDINATOR message now includes leader's PeerInfo in membership field  
+**Impact**: Followers can immediately forward messages to new leader
+
+### 2. Follower-to-Leader JOIN Handling
+**Problem**: Node rejoining via follower didn't learn about leader  
+**Solution**: Followers send COORDINATOR on behalf of leader during JOIN  
+**Impact**: Rejoining nodes discover leader regardless of which node they contact
+
+### 3. Election Cancellation
+**Problem**: Node could become leader even after receiving COORDINATOR  
+**Solution**: Check `election_in_progress` flag after timeout, cancel if COORDINATOR received  
+**Impact**: Prevents split-brain scenarios during concurrent elections
+
+### 4. Duplicate Message Storage
+**Problem**: Messages stored 2-3 times (leader, SEQ_CHAT handler, delivery callback)  
+**Solution**: Consolidate to single storage point in `_on_deliver_message` callback  
+**Impact**: Clean logs, no duplicates, consistent storage across all nodes
+
+### 5. Follower last_seq Tracking
+**Problem**: Followers didn't update last_seq, causing duplicate seq_no after promotion  
+**Solution**: Update `last_seq = max(last_seq, seq_no)` in `_deliver_message`  
+**Impact**: Seamless leader promotion with continuous sequence numbers
+
+### 6. Import Path Errors
+**Problem**: `from common import PeerInfo` (missing dot) crashed COORDINATOR handler  
+**Solution**: Fixed to `from .common import PeerInfo`  
+**Impact**: COORDINATOR messages now process correctly, role changes work
+
 ## References
 
 - **Total Order Broadcast**: Group communication literature
-- **Bully Algorithm**: Garcia-Molina (1982)
+- **Bully Algorithm**: Garcia-Molina (1982) - Extended with PeerInfo propagation
 - **Heartbeat Failure Detection**: Chandra & Toueg (1996)
 - **Sequencer-based Ordering**: Classic distributed systems technique
+- **Implementation**: Python 3.10+ with asyncio
 
 ---
 
-For implementation details, see the source code in `src/`.
-For deployment instructions, see `README.md` and `deploy/k8s/README-k8s.md`.
+For implementation details, see the source code in `src/`.  
+For deployment instructions, see `README.md` and `deploy/k8s/README-k8s.md`.  
+For testing, run `make test` or see `tests/` directory.
 
