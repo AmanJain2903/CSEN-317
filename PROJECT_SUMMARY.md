@@ -183,7 +183,7 @@ pytest tests/ -v
 make test
 ```
 
-**Expected: 17/17 tests pass** ✅
+**Expected: 17/17 tests pass** [PASS]
 
 ## Performance Characteristics
 
@@ -228,14 +228,14 @@ make test
 
 ### What Works Well
 
-✅ **Total order maintained** across all nodes  
-✅ **Leader failover** works seamlessly with continuous sequence numbers  
-✅ **Node rejoin** and catch-up protocol works correctly  
-✅ **Duplicate detection** prevents message replay  
-✅ **Persistent storage** enables crash recovery  
-✅ **Concurrent clients** supported without conflicts  
-✅ **Election cancellation** prevents split-brain  
-✅ **PeerInfo propagation** ensures immediate connectivity after election
+[PASS] **Total order maintained** across all nodes  
+[PASS] **Leader failover** works seamlessly with continuous sequence numbers  
+[PASS] **Node rejoin** and catch-up protocol works correctly  
+[PASS] **Duplicate detection** prevents message replay  
+[PASS] **Persistent storage** enables crash recovery  
+[PASS] **Concurrent clients** supported without conflicts  
+[PASS] **Election cancellation** prevents split-brain  
+[PASS] **PeerInfo propagation** ensures immediate connectivity after election
 
 ## Recent Improvements (November 2025)
 
@@ -328,7 +328,7 @@ This project demonstrates:
 | Docker Compose works | PASS | `docker compose up` starts cluster successfully |
 | Tests pass | PASS | `pytest tests/ -v` shows 17/17 tests passing |
 
-**All 10 acceptance criteria: ✅ PASS**
+**All 10 acceptance criteria: [PASS] PASS**
 
 ## Code Quality
 
@@ -394,27 +394,27 @@ This project successfully implements a distributed chat system with:
 
 ### Key Achievements
 
-✅ **Production-quality implementation** with ~2,000 LOC  
-✅ **Zero known critical bugs** after November 2025 fixes  
-✅ **100% test pass rate** (17/17 tests)  
-✅ **Seamless leader failover** with continuous sequence numbers  
-✅ **Split-brain prevention** via election cancellation  
-✅ **Complete documentation** (README, ARCHITECTURE, DEMO, guides)  
-✅ **Multiple deployment options** (local, Docker, Kubernetes)  
+[PASS] **Production-quality implementation** with ~2,000 LOC  
+[PASS] **Zero known critical bugs** after November 2025 fixes  
+[PASS] **100% test pass rate** (17/17 tests)  
+[PASS] **Seamless leader failover** with continuous sequence numbers  
+[PASS] **Split-brain prevention** via election cancellation  
+[PASS] **Complete documentation** (README, ARCHITECTURE, DEMO, guides)  
+[PASS] **Multiple deployment options** (local, Docker, Kubernetes)  
 
 The system is suitable for:
-- ✅ Educational purposes (learning distributed systems)
-- ✅ Demonstration of key algorithms
-- ✅ Foundation for more complex systems
-- ✅ Interview/portfolio projects
-- ✅ Understanding async Python patterns
-- ✅ Learning Docker/K8s deployment
+- [PASS] Educational purposes (learning distributed systems)
+- [PASS] Demonstration of key algorithms
+- [PASS] Foundation for more complex systems
+- [PASS] Interview/portfolio projects
+- [PASS] Understanding async Python patterns
+- [PASS] Learning Docker/K8s deployment
 
 **Not suitable for**:
-- ❌ Production use without security hardening (no TLS/auth)
-- ❌ High-security requirements (no encryption)
-- ❌ Large-scale deployments (>100 nodes)
-- ❌ Byzantine fault tolerance scenarios
+- [FAIL] Production use without security hardening (no TLS/auth)
+- [FAIL] High-security requirements (no encryption)
+- [FAIL] Large-scale deployments (>100 nodes)
+- [FAIL] Byzantine fault tolerance scenarios
 
 ## Getting Help
 
@@ -436,7 +436,7 @@ For questions, improvements, or bug reports, please follow standard GitHub pract
 
 ---
 
-**Project Status**: ✅ Complete, tested, and production-ready (for educational use)
+**Project Status**: [PASS] Complete, tested, and production-ready (for educational use)
 
 **Last Updated**: November 2025 (with critical bug fixes)
 
@@ -450,11 +450,11 @@ For questions, improvements, or bug reports, please follow standard GitHub pract
 7. Attempt Kubernetes deployment for cloud simulation
 
 **Quality Metrics**:
-- 📊 **Test Coverage**: 17/17 passing (100%)
-- 📝 **Documentation**: 6+ comprehensive markdown files
-- 🐛 **Known Bugs**: 0 critical bugs
-- 🔧 **Code Quality**: Type hints, docstrings, PEP 8 compliant
-- 🚀 **Deployment**: 3 working deployment methods
+-  **Test Coverage**: 17/17 passing (100%)
+-  **Documentation**: 6+ comprehensive markdown files
+-  **Known Bugs**: 0 critical bugs
+-  **Code Quality**: Type hints, docstrings, PEP 8 compliant
+-  **Deployment**: 3 working deployment methods
 
-Happy distributed systems learning! 🎓
+Happy distributed systems learning! 
 

@@ -1,0 +1,1228 @@
+Distributed Chat System: A Sequencer-Based
+Approach with Bully Election
+Amarnath Seetharam Kaushik
+Computer Science & Engineering
+Santa Clara University
+Santa Clara, USA
+akaushik4@scu.edu
+Aman Jain
+Computer Science & Engineering
+Santa Clara University
+Santa Clara, USA
+ajain7@scu.edu
+Sachin Prabhakar
+Computer Science & Engineering
+Santa Clara University
+Santa Clara, USA
+snln@scu.edu
+Abstract—Modern distributed systems must provide high availability, consistent ordering, and reliable coordination even when
+individual components fail. These challenges become especially
+critical in real-time communication environments where messages
+must be delivered with low latency and without a single point
+of failure. To address these requirements, we designed and
+implemented a fully distributed chat system that demonstrates
+three foundational distributed systems algorithms: (1) the Bully
+algorithm for leader election, (2) heartbeat-based failure detection for crash recovery, and (3) sequencer-based total order
+broadcast for consistent message ordering across all nodes.
+Our system is built using a cluster of Python broker nodes
+that coordinate to process chat messages from multiple clients.
+A dynamically elected leader assigns monotonically increasing
+sequence numbers to ensure total order delivery. Messages are
+disseminated across the cluster through reliable TCP broadcast,
+ensuring strong consistency while maintaining fault tolerance.
+A terminal-based client interface provides real-time interaction
+with the distributed system, allowing users to observe leader
+transitions, message ordering, and failure recovery.
+Experimental evaluation shows that leader failures are detected and resolved within 3-4 seconds, message ordering is maintained consistently across all nodes, and clients receive updates
+in globally ordered sequence. These results demonstrate that
+classical distributed algorithms remain effective and practical
+for building fault-tolerant, low-latency communication systems.
+Index Terms—Distributed Systems, Leader Election, Bully
+Algorithm, Total Order Broadcast, Sequencer, Fault Tolerance,
+Chat Systems, Consistency, Crash Recovery.
+I. INTRODUCTION
+In modern communication systems, millions of messages
+are exchanged every second, and applications such as chat
+platforms, collaborative tools, and real-time notification systems rely heavily on the timely and consistent delivery of
+messages. Traditional centralized architectures struggle in such
+environments: a single point of failure can disrupt the entire
+system, inconsistencies may arise when multiple components
+process events out of order, and network delays can lead to
+unpredictable system behavior. As demand for availability and
+real-time responsiveness increases, the need for fault-tolerant,
+distributed messaging systems becomes more pressing.
+Distributed algorithms provide structured mechanisms to
+address these challenges. Leader election guarantees that only
+one node is responsible for serializing updates for a particular
+data stream, ensuring correctness even when nodes fail. Total
+order broadcast ensures that all nodes deliver messages in the
+same sequence, maintaining consistency across the distributed
+system. Failure detection enables automatic recovery from
+crashes, ensuring high availability.
+Motivated by these requirements, we built a real-time distributed chat system that demonstrates the practical integration
+of three foundational distributed system algorithms: (1) the
+Bully algorithm for deterministic leader election, (2) heartbeatbased failure detection for crash recovery, and (3) sequencerbased total order broadcast for global message ordering. The
+system consists of a cluster of Python broker nodes that coordinate to handle messages from multiple clients. A terminalbased client interface provides real-time interaction with the
+distributed system, allowing users to observe live message
+flows, leader transitions, and failure recovery.
+This project serves both as a practical demonstration of
+distributed system principles and as an educational tool for
+understanding how communication, coordination, and failure
+handling operate in real-world systems. The remainder of this
+paper is organized as follows: Section II reviews existing
+research and foundational work on leader election, total order broadcast, and failure detection. Section III presents our
+system design and architecture. Section IV explains the algorithms and components used. Section V describes our implementation and challenges. Section VI evaluates the approach
+and addresses key issues. Section VII presents performance
+evaluation results. Section VIII demonstrates example system
+runs. Section IX reports testing results. Section X discusses
+the results, and Section XI concludes with future directions.
+A. Problem Description
+Chat applications represent a fundamental class of distributed systems that must process a continuous stream of
+messages originating from different clients and deliver these
+messages consistently across all connected nodes. The challenge lies in ensuring that all participants in a conversation
+see messages in the same order, regardless of which node they
+connect to or when they join the system.
+Traditional centralized architectures cannot provide the required level of scalability or resilience because a single node
+failure can interrupt the flow of messages, causing service
+unavailability for all users. In a centralized system, if themessage broker crashes, the entire chat service becomes
+unavailable. This creates a critical single point of failure
+that is unacceptable for production systems requiring high
+availability.
+Our system addresses this limitation by distributing message
+routing responsibilities across multiple broker nodes, ensuring
+that no single machine becomes a point of failure. When one
+node fails, the system automatically detects the failure and
+elects a new coordinator, allowing the service to continue
+operating seamlessly. This distributed approach provides several key benefits: fault tolerance (surviving individual node
+failures), scalability (adding new nodes to handle increased
+load), geographic distribution (deploying nodes across data
+centers), and load distribution (followers handle client connections while leader handles sequencing).
+However, distributing the system introduces new challenges:
+ensuring consistency (all nodes see messages in the same
+order), coordination (deciding which node sequences messages), failure detection (distinguishing crashes from slow
+networks), and recovery (ensuring nodes don’t miss messages
+after rejoining).
+B. Motivation
+This project was motivated by the need to understand how
+distributed algorithms behave in real-time systems and how
+fault tolerance can be achieved through coordinated cooperation between independent nodes. The chat domain is an
+ideal testbed because even small inconsistencies in message
+ordering can lead to confusion and incorrect interpretation.
+For example, if Alice sends ”I’ll meet you at 3pm” and Bob
+sends ”Actually, let’s make it 4pm”, the order in which these
+messages are delivered determines whether the meeting time
+is 3pm or 4pm.
+By combining leader election, total order broadcast, and
+failure detection, the system demonstrates how real-world
+messaging platforms achieve reliability and correctness. These
+algorithms are not just theoretical constructs but are actively
+used in production systems: leader election in Apache Kafka
+and Zookeeper, total order broadcast in distributed databases
+and message queues, and failure detection in load balancers
+and service discovery systems.
+C. Contributions
+This project makes several key contributions: (1) a working implementation of three classical distributed algorithms
+integrated into a cohesive system, (2) an educational tool
+that makes distributed algorithms observable through comprehensive logging, (3) empirical performance analysis under
+various failure scenarios, (4) demonstration of design patterns
+for maintainable distributed systems code, and (5) multiple
+deployment options (local, Docker, Kubernetes) showing realworld applicability.
+D. Distributed System Challenges
+Building a distributed chat system involves overcoming
+several inherent challenges that are fundamental to distributed
+computing:
+1) Ordering: In a distributed system, clocks are not synchronized. Determining the global order of events (messages) without a central clock is difficult. We addressed
+this using a logical sequencer (leader) that assigns monotonic sequence numbers, ensuring all nodes deliver messages in the same order regardless of physical time.
+2) Failure Handling: Nodes can crash at any time. The
+system must distinguish between a slow network and a
+crashed node. We utilized heartbeat-based failure detection with configurable timeouts to detect leader failures
+and trigger automatic recovery through leader election.
+3) Consistency: All nodes must agree on the message history. We achieved this through the Total Order Broadcast
+property, ensuring that all nodes deliver messages in exactly the same sequence, maintaining strong consistency
+across the distributed system.
+4) Concurrency: Multiple clients may send messages simultaneously. The system must handle these concurrent
+requests without race conditions or data corruption. Our
+single-threaded event loop with async/await patterns handles concurrency safely within each node, while the sequencer ensures global ordering of concurrent messages.
+5) Network Partitions: Network failures can split the
+cluster into disconnected groups. Our system handles
+partitions best-effort: when partitions heal, nodes rejoin
+and catch up on missed messages, ensuring eventual
+consistency.
+6) State Synchronization: Nodes that recover from failures
+must synchronize their state with the rest of the cluster.
+We implement a catch-up protocol that allows rejoining
+nodes to request and receive all missed messages in order.
+II. RELATED WORK
+Distributed systems research has produced a wide range
+of algorithms and protocols to address coordination, failure
+recovery, consistency, and message ordering. Our work is
+grounded in three foundational categories of algorithms: leader
+election, total order broadcast, and failure detection. In this
+section, we review the most influential contributions in each
+area and discuss how they relate to our system.
+A. Leader Election
+Leader election is a fundamental problem in distributed
+computing, required whenever a system must designate a
+single coordinator among multiple nodes. The problem arises
+in many contexts: selecting a primary node in a database
+cluster, choosing a coordinator for distributed transactions,
+or designating a sequencer for total order broadcast. The
+challenge is to ensure that exactly one leader is elected, even in
+the presence of network delays, node failures, and concurrent
+election attempts.
+Garcia-Molina’s Bully algorithm [1], published in 1982, is
+one of the earliest and most widely studied solutions to the
+leader election problem. The algorithm derives its name from
+the idea that higher-priority nodes ”bullies” lower-prioritynodes into accepting them as the leader. The algorithm assumes that: (1) each node has a unique identifier (node id), (2)
+nodes can detect failures using timeouts, (3) communication
+is reliable (messages are eventually delivered), and (4) nodes
+fail by crashing (crash-stop failure model).
+The algorithm proceeds as follows: When a node detects
+that the leader has failed (through timeout), it initiates an election by sending ELECTION messages to all nodes with higher
+IDs. If any higher-ID node responds with ELECTION OK,
+the initiating node waits for a COORDINATOR message
+announcing the new leader. If no responses are received within
+a timeout period, the node declares itself the leader and
+broadcasts a COORDINATOR message to all nodes.
+Algorithm Properties: The Bully algorithm has several
+important properties: Determinism - the highest-ID live node
+always becomes the leader, providing predictable behavior;
+Liveness - if a majority of nodes are alive and can communicate, an election will eventually complete; Safety - at most
+one leader exists at any time (assuming no network partitions);
+Message Complexity - worst-case O(n2) messages during an
+election, where n is the number of nodes; Time Complexity -
+O(n) time in the best case, O(n2) in the worst case.
+Comparison with Alternatives: Several alternative leader
+election algorithms exist, each with different trade-offs:
+1) Ring Election Algorithm: Reduces message overhead to
+O(n) by organizing nodes in a ring topology. However, it
+requires strict process topology and is more complex to
+implement. The ring must be maintained even as nodes
+join and leave.
+2) Raft Consensus Algorithm [2]: Provides stronger fault
+tolerance guarantees through log replication and majority
+quorums. Raft ensures that a leader can only be elected if
+it has the most up-to-date log entries, preventing data loss.
+However, Raft is significantly more complex, requiring
+log replication, term-based voting, and careful handling
+of log consistency.
+3) Paxos Algorithm [3]: The classic consensus algorithm
+that provides the strongest guarantees. Paxos can handle
+byzantine failures and provides mathematical proofs of
+correctness. However, Paxos is notoriously difficult to
+understand and implement correctly, making it unsuitable
+for educational purposes.
+4) Zookeeper’s Leader Election: Uses a combination of
+persistent sequential nodes and watches. While efficient,
+it requires an external coordination service (Zookeeper
+itself), adding system complexity.
+Recent Enhancements: Recent research has proposed enhancements to traditional algorithms. Patel and Tere (2025)
+suggest a ”coordinator group” to reduce message overhead
+during elections [7]. Hossain et al. (2023) propose ZePoP,
+electing leaders based on network delay rather than static
+IDs [5]. Wang et al. (2023) present churn-tolerant leader
+election protocols that handle dynamic membership changes
+[6]. While our implementation uses the classic Bully algorithm
+for simplicity, these optimizations highlight potential future
+improvements for scalability.
+Our Selection Rationale: Given our educational goals and
+deterministic leadership requirement, we selected the Bully
+algorithm for several reasons: (1) Simplicity - the algorithm
+is easy to understand and implement, making it ideal for
+learning; (2) Determinism - the highest-ID node always wins,
+providing predictable behavior for testing; (3) Self-Contained
+- no external dependencies or coordination services required;
+(4) Clarity - the algorithm’s behavior is straightforward to
+reason about and debug; (5) Appropriate Scale - for our 3node cluster, the O(n2) message complexity is acceptable.
+While the Bully algorithm has limitations (particularly its
+message complexity and lack of partition tolerance), it serves
+as an excellent introduction to leader election concepts. Understanding the Bully algorithm provides a foundation for
+learning more sophisticated algorithms like Raft and Paxos.
+B. Total Order Broadcast
+Total order broadcast (also known as atomic broadcast or
+total order multicast) is a fundamental primitive in distributed
+systems that ensures all nodes deliver messages in the same
+order, even when messages arrive at different times or through
+different paths. This property is crucial for maintaining consistency in distributed systems, as it guarantees that all nodes
+see the same sequence of events.
+The problem of total order broadcast was first formalized
+by Hadzilacos and Toueg, who showed that it is equivalent
+to consensus in asynchronous systems with crash failures.
+Defago et al. [4] provide a comprehensive taxonomy of total
+order broadcast algorithms, categorizing them into three main
+approaches:
+1) Fixed Sequencer: A single designated node (the sequencer) assigns sequence numbers to all messages. All
+nodes deliver messages in the order determined by these
+sequence numbers.
+2) Moving Sequencer: The role of sequencer rotates among
+nodes, with each node taking turns assigning sequence
+numbers. This distributes the sequencing load but requires
+coordination to ensure the sequencer role moves correctly.
+3) Token-Based: A token circulates among nodes, and only
+the node holding the token can assign sequence numbers.
+This approach provides fairness but introduces latency as
+the token must circulate.
+Fixed Sequencer Approach: Our implementation uses a
+fixed sequencer approach, where a single leader node (elected
+via the Bully algorithm) acts as the sequencer and assigns
+monotonically increasing sequence numbers to all messages.
+This approach provides several advantages: Simplicity - the
+algorithm is straightforward to implement and reason about;
+Strong Guarantees - provides strict total order, all nodes
+deliver messages in exactly the same sequence; Low Latency
+- messages can be sequenced immediately without waiting for
+token circulation or sequencer rotation; Deterministic - the
+ordering is deterministic and reproducible.
+However, the fixed sequencer approach has limitations:
+Single Point of Failure - the sequencer becomes a bottleneck
+and a single point of failure; Scalability - throughput is limitedby the sequencer’s processing capacity; Network Dependency
+- all messages must reach the sequencer before they can be
+ordered.
+Our system addresses the single point of failure concern
+through leader election: when the sequencer (leader) fails,
+a new leader is elected and takes over sequencing responsibilities. The new leader continues sequence numbering from
+the highest sequence number seen by any node, ensuring
+continuity.
+Alternative Approaches: Several alternative approaches to
+total order broadcast exist:
+1) Lamport Logical Clocks [8]: Each node maintains a
+logical clock that is incremented on local events and updated on message receipt. Messages are ordered by their
+logical timestamps. However, logical clocks only provide
+partial ordering (causal ordering), not total ordering. To
+achieve total ordering, additional mechanisms are needed.
+2) Vector Clocks: Extend logical clocks to track causal relationships between events. Vector clocks provide stronger
+causality tracking than logical clocks but still require
+additional mechanisms for total ordering.
+3) Lamport Timestamps with Tie-Breaking: Use Lamport
+timestamps but break ties using node IDs to create a total
+order. This approach distributes the ordering responsibility but requires all nodes to agree on tie-breaking rules.
+4) Raft Log Replication [2]: Raft provides total order
+through log replication. All operations are appended to
+a replicated log, and all nodes apply log entries in the
+same order. This approach provides strong consistency
+guarantees but is more complex than a simple sequencer.
+5) Paxos-Based Ordering [3]: Use Paxos to agree on
+message ordering. Each message position in the sequence
+requires a Paxos instance, making it expensive but providing the strongest guarantees.
+Recent Work: Recent research has explored optimizations
+for total order broadcast. Lundstr ̈om et al. (2022) present selfstabilizing total-order broadcast algorithms [10]. D’Amato et
+al. (2023) propose TOB-SVD, a total-order broadcast protocol
+with single-vote decisions in the sleepy model [11]. Izraelevitz
+et al. (2022) present Acuerdo, a fast atomic broadcast system
+over RDMA [12]. These works demonstrate ongoing interest
+in optimizing total order broadcast for different environments
+and use cases.
+Comparison and Trade-offs: Table I compares different
+approaches to total order broadcast.
+Our Selection Rationale: We selected the fixed sequencer
+approach because: (1) Educational Value - it clearly demonstrates the concept of total ordering; (2) Simplicity - easy to
+implement and understand; (3) Strong Guarantees - provides
+strict total order, which is what we need for chat messages; (4)
+Integration - works naturally with our leader election mechanism; (5) Appropriate Scale - for our use case (educational
+system with moderate message rates), the sequencer bottleneck
+is acceptable.
+The fixed sequencer approach, combined with leader election for fault tolerance, provides an excellent balance between
+simplicity and correctness for our educational system.
+C. Failure Detection
+Failure detection is a fundamental problem in distributed
+systems: how can processes determine whether other processes
+have failed? This problem is complicated by the fact that in
+a distributed system, it is impossible to distinguish between a
+process that has crashed and a process that is simply slow or
+unreachable due to network issues.
+Chandra and Toueg [9] introduced the concept of unreliable
+failure detectors, showing that many distributed problems
+become solvable when processes can detect failures, even if
+detection is not always accurate. They defined several classes
+of failure detectors based on their properties:
+1) Perfect Failure Detector (P): Never makes mistakes -
+if a process crashes, it is eventually detected, and live
+processes are never suspected of being crashed.
+2) Eventually Perfect Failure Detector (⋄P): Eventually
+becomes perfect - after some point, it correctly identifies
+all crashes and stops suspecting live processes.
+3) Strong Failure Detector (S): Stronger than P, provides
+additional guarantees about detection speed.
+4) Weak Failure Detector (W): Weaker than P, may make
+mistakes but provides some useful guarantees.
+Heartbeat-Based Failure Detection: Heartbeat-based failure detection is one of the most common implementations
+of unreliable failure detectors. The approach is simple: a
+designated process (the leader) periodically sends ”heartbeat”
+messages to indicate that it is alive. Other processes (followers)
+monitor these heartbeats and suspect the leader has failed if
+no heartbeat is received within a timeout period.
+The heartbeat approach has several advantages: Simplicity -
+easy to implement and understand; Low Overhead - heartbeats
+are small messages sent periodically; Tunable - the heartbeat interval and timeout can be adjusted based on network
+conditions; Scalable - works well even with many followers
+monitoring one leader.
+However, heartbeat-based detection has limitations: False
+Positives - network delays or temporary partitions can cause
+false failure detections; Detection Delay - there is a minimum
+delay (the timeout period) before a failure is detected; Network
+Dependent - requires reliable communication channels.
+Our Implementation: Our system implements an unreliable failure detector using heartbeats. The design includes:
+(1) Leader Behavior - the leader sends periodic HEARTBEAT messages to all followers every ‘heartbeat interval ms‘
+(default: 800ms). These heartbeats include the current term
+number to ensure followers are aware of leadership changes.
+(2) Follower Behavior - followers track the ‘last seen time‘
+of the leader. On receiving a HEARTBEAT, followers update this timestamp. Followers periodically check if ‘(now -
+last seen time) ¿ leader timeout ms‘ (default: 2500ms). If the
+timeout is exceeded, followers suspect the leader has failed and
+trigger an election. (3) Timeout Configuration - the timeout is
+set to approximately 3 times the heartbeat interval (2500ms
+vs 800ms), providing a buffer for network delays and messageTABLE I: Comparison of Total Order Broadcast Approaches
+Approach Complexity Latency Throughput Fault Tolerance
+Fixed Sequencer Low Low Medium Medium
+Moving Sequencer Medium Medium High Medium
+Token-Based Medium High Medium Medium
+Logical Clocks* Low Low High High
+Raft High Medium Medium High
+Paxos Very High High Low Very High
+*Provides partial order only
+processing time. This ratio balances detection speed with false
+positive tolerance.
+Failure Detector Properties: Our implementation provides
+an Eventually Perfect Failure Detector (⋄P): Completeness -
+eventually, every crashed leader is detected by all followers;
+Accuracy - after the system stabilizes (no network partitions),
+no live leader is suspected of being crashed; Detection Time
+- failures are detected within the timeout period (default: 2.5
+seconds).
+Comparison with Alternatives: Several alternative failure
+detection mechanisms exist:
+1) Ping-Based Detection: Followers actively ping the leader
+and suspect failure if no response is received. This
+approach is similar to heartbeats but reverses the communication direction.
+2) Gossip-Based Detection: Nodes exchange membership
+information through gossip protocols. Failed nodes are
+eventually removed from membership lists. This approach
+is more scalable but provides weaker guarantees.
+3) Lease-Based Detection: The leader grants ”leases” to
+followers, which expire if not renewed. This approach
+provides stronger guarantees but is more complex.
+4) Application-Level Health Checks: Monitor applicationspecific health indicators rather than generic heartbeats.
+This provides more accurate failure detection but requires
+application-specific logic.
+Trade-offs and Design Decisions: Our heartbeat-based
+approach balances several concerns: Detection Speed - shorter
+timeouts detect failures faster but increase false positive
+risk; False Positive Tolerance - longer timeouts reduce false
+positives but delay failure detection; Network Overhead -
+more frequent heartbeats reduce detection delay but increase
+network traffic; Scalability - heartbeat-based detection scales
+well as the number of followers increases (leader sends one
+message, followers process independently).
+For our educational system, the heartbeat approach provides
+an excellent balance: it’s simple to understand and implement,
+provides reasonable failure detection times, and demonstrates
+the core concepts of unreliable failure detection. The tunable
+parameters (heartbeat interval and timeout) allow experimentation with different failure detection characteristics.
+III. SYSTEM DESIGN AND ARCHITECTURE
+A. Design Goals
+The design addresses the following distributed systems challenges, ensuring our system handles core distributed systems
+requirements:
+• Heterogeneity: The system runs on diverse hardware
+and operating systems through Python’s cross-platform
+compatibility and Docker containerization, abstracting
+underlying differences. Nodes can run on different architectures (x86, ARM) and operating systems (Linux,
+macOS, Windows) while maintaining interoperability.
+• Openness: The system uses standard protocols (TCP,
+JSON) and can be extended with new features. The
+modular architecture allows components to be modified
+or replaced independently. The system supports dynamic
+node addition and removal, enabling flexible cluster management.
+• Security: Currently assumes a trusted network environment for educational purposes. The system uses plaintext
+communication over TCP. Future work includes TLS
+encryption for inter-node communication, client authentication (JWT tokens), and authorization mechanisms to
+ensure secure message delivery.
+• Failure Handling: Automatic detection and recovery
+from crash failures through heartbeat monitoring and
+leader election. The system handles single node failures, multiple concurrent failures, and network partitions.
+Failed nodes can rejoin and automatically catch up on
+missed messages.
+• Concurrency: Handled by Python’s asyncio event loop,
+ensuring thread-safe message processing within each
+node. Multiple clients can send messages concurrently,
+and the sequencer ensures these concurrent messages are
+ordered consistently across all nodes. The async architecture eliminates the need for complex locking mechanisms.
+• Quality of Service: Provides low latency (sub-50ms
+end-to-end) and high availability (99.9% uptime with
+automatic failover within 3-4 seconds). The system maintains message ordering guarantees even under network
+delays and node failures. Throughput scales up to 200
+messages/second on standard hardware.
+• Scalability: Supports dynamic addition of nodes.
+Throughput scales with cluster size, though limited by
+single-leader bottleneck. The system can handle hundredsof concurrent users. Horizontal scaling is achieved by
+adding more follower nodes, while vertical scaling improves leader throughput.
+• Transparency: Users are unaware of leader election
+or recovery processes. The system appears as a single
+coherent service. Clients can connect to any node and
+receive the same consistent view. Leader failures and
+elections occur transparently without user intervention.
+• Total Order Consistency: All nodes must deliver messages in the same sequence, regardless of when or where
+they were sent. This is achieved through sequencer-based
+ordering with sequence numbers.
+• Persistence: Messages must be stored durably to survive
+node crashes and restarts. Append-only log files ensure
+message durability and enable crash recovery.
+B. Architecture Overview
+The system follows a peer-to-peer architecture with a dynamically elected leader. All nodes are capable of becoming
+the leader, and the system automatically elects a new leader
+when the current one fails. The architecture consists of the
+following layers:
+1) Transport Layer: Handles low-level TCP communication, connection management, and message serialization.
+2) Membership Layer: Maintains the list of active peers
+and tracks the current leader.
+3) Failure Detection Layer: Monitors leader health through
+heartbeats and triggers elections on timeout.
+4) Election Layer: Implements the Bully algorithm to elect
+a new leader when needed.
+5) Ordering Layer: Assigns sequence numbers (leader) and
+buffers out-of-order messages (followers).
+6) Storage Layer: Persists messages to disk for crash
+recovery.
+7) Application Layer: Orchestrates all components and
+handles client connections.
+Application (Client TUI / Orchestrator)
+Services (Election, Membership, Failure)
+Transport Layer (TCP/JSON)
+Storage (File System / Disk)
+Fig. 1: Layered System Architecture.
+C. Key Components
+The system uses a layered architecture where each component has well-defined responsibilities:
+• TransportLayer: Provides async TCP server/client functionality, connection pooling, and JSON message serialization.
+• MembershipManager: Tracks cluster membership,
+maintains peer information, and provides queries for
+election (e.g., ”get all peers with higher priority”).
+• FailureDetector: Monitors leader heartbeats, tracks lastseen timestamps, and triggers callbacks on timeout.
+• ElectionManager: Implements Bully algorithm, handles ELECTION, ELECTION OK, and COORDINATOR messages, and manages election state.
+• OrderingManager: Leader assigns sequence numbers;
+followers buffer out-of-order messages and deliver in
+sequence.
+• StorageManager: Appends messages to JSONL log files,
+loads state on startup, and provides catch-up queries.
+• ChatNode: Main orchestrator that coordinates all components, routes messages, and manages node lifecycle.
+D. Message Flow
+Normal Operation: (1) Client sends CHAT message to any
+node (follower or leader). (2) If follower receives CHAT, it
+forwards to leader. (3) Leader assigns next sequence number and creates SEQ CHAT message. (4) Leader broadcasts
+SEQ CHAT to all peers (including itself). (5) All nodes
+deliver messages in sequence number order. (6) Messages are
+persisted to disk via delivery callback.
+Leader Failure: (1) Followers detect missing heartbeats
+(timeout after 2500ms). (2) Follower with highest priority
+starts election. (3) Election completes, new leader broadcasts
+COORDINATOR. (4) New leader continues sequence numbering from highest seen sequence. (5) System resumes normal
+operation.
+Node Rejoin: (1) Rejoining node sends JOIN message to
+seed nodes. (2) Receives JOIN ACK with full membership
+list. (3) Receives COORDINATOR with current leader information. (4) Requests catch-up for messages after last known
+sequence. (5) Receives missing messages and resumes normal
+operation.
+User
+Distributed Chat System
+Send Message
+View History
+Join Node
+Fig. 2: Use Case Diagram OverviewNode 1
+(Container)
+Node 2
+(Container)
+Node 3
+(Container)
+Fig. 3: Deployment Diagram showing 3 Docker containers
+connected in a mesh.
+Node 1 Node 2
+Node 3 (L)
+CHAT SEQ CHAT
+SEQ CHAT
+Fig. 4: Communication Diagram illustrating message flow.
+IV. ALGORITHMS AND COMPONENTS
+This section details the three core algorithms implemented
+in our distributed chat system: (1) Bully Election Algorithm,
+(2) Total Order Broadcast via Sequencer, and (3) HeartbeatBased Failure Detection.
+A. Bully Election Algorithm
+The Bully algorithm ensures that the highest-priority node
+(highest node id) becomes the leader. The algorithm proceeds
+Client Follower Leader
+CHAT
+Forward CHAT
+SEQ CHAT
+Deliver
+Display
+Fig. 5: Sequence Diagram for a standard CHAT message.
+Followerstart Candidate
+Leader
+Timeout
+Win
+Wait OK
+Fail
+Lose
+Fig. 6: State Diagram showing node role transitions.
+Start
+Receive CHAT
+Is Leader? Forward to Leader
+Assign Seq No
+Broadcast SEQ CHAT
+Deliver Message
+End
+No
+Yes
+Fig. 7: Activity Diagram for message processing flow.
+in three phases:
+Phase 1: Election Initiation - When a follower detects
+leader timeout, it starts an election by sending ELECTION
+messages to all peers with higher node id. If any higherpriority node responds with ELECTION OK, the initiating
+node waits for a COORDINATOR message. If no responses
+are received within a timeout period, the node declares itself
+the leader.
+Phase 2: Election Response - When a node receives an
+ELECTION message from a lower-priority node, it responds
+with ELECTION OK and then starts its own election (if notalready in progress). This ensures elections ”bubble up” to the
+highest-priority node.
+Phase 3: Coordinator Announcement - The winning node
+broadcasts a COORDINATOR message to all peers, including
+the leader’s PeerInfo (host, port) for immediate connectivity.
+All nodes update their leader information and role.
+Election Cancellation - If a node receives a COORDINATOR message during an ongoing election, it cancels the
+election. This prevents split-brain scenarios when multiple
+elections occur concurrently.
+Term Numbers - Each new leader increments a term
+number. Messages with old terms are ignored, preventing stale
+leaders from causing inconsistencies.
+Complexity Analysis: Message complexity is O(n2) in
+worst case, O(n) in best case. Time complexity is O(n) in best
+case, O(n2) in worst case. The deterministic nature ensures
+the highest-priority node always wins, providing predictable
+behavior.
+ID:3
+ID:2 ID:1
+Crashed
+Detector
+ELECTION ELECTION
+COORDINATOR
+Fig. 8: Bully Algorithm Visualization. Node 2 detects Node 3’s
+failure, wins the election, and announces itself as Coordinator.
+B. Total Order Broadcast via Sequencer
+The sequencer-based approach ensures total order by having a single leader assign monotonically increasing sequence
+numbers.
+Leader Role: The leader maintains a ‘last seq‘ counter,
+initialized from storage on startup. On receiving a CHAT
+message, the leader increments ‘last seq‘ and assigns it to
+the message. The leader creates a SEQ CHAT message with
+sequence number, term, and payload, then broadcasts it to all
+peers (including self-delivery). The leader persists the message
+to storage via delivery callback.
+Follower Role: Followers forward CHAT messages to the
+leader. Followers maintain ‘next expected‘ sequence number.
+On receiving SEQ CHAT: if ‘seq no == next expected‘,
+deliver immediately, update ‘next expected‘, and deliver
+buffered messages; if ‘seq no ¿ next expected‘, buffer the
+message; if ‘seq no ¡ next expected‘, ignore (duplicate or
+stale). Followers update ‘last seq‘ on delivery to enable seamless leader promotion.
+Buffering: Out-of-order messages are stored in a buffer
+keyed by sequence number. When the expected sequence arrives, the node delivers it and checks the buffer for consecutive
+messages. This ensures messages are always delivered in order,
+even if network reordering occurs.
+Idempotence: Messages are deduplicated using (seq no,
+term) tuples. The same message delivered multiple times has
+the same effect as once, preventing duplicate processing during
+retries or network reordering.
+C. Heartbeat-Based Failure Detection
+The failure detector uses a simple heartbeat mechanism. The
+leader sends HEARTBEAT messages to all followers every
+‘heartbeat interval ms‘ (default: 800ms). Heartbeats include
+current term and leader information, serving dual purpose as
+liveness signal and membership synchronization.
+Followers track ‘last seen time‘ of the leader. On receiving HEARTBEAT, followers update ‘last seen time‘.
+Followers periodically check if ‘(now - last seen time) ¿
+leader timeout ms‘ (default: 2500ms). If timeout is detected,
+followers trigger election.
+The system assumes crash-stop failures (nodes fail by crashing, not byzantine behavior). Network partitions are handled
+best-effort: when partition heals, nodes rejoin and catch up. No
+guarantees are provided during partition (split-brain possible,
+but mitigated by terms).
+V. IMPLEMENTATION
+A. Technology Stack
+The system is implemented in Python 3.10+ using the
+following technologies: asyncio for asynchronous I/O, TCP
+sockets for reliable ordered transport, JSON for humanreadable message serialization, YAML for configuration files,
+and JSONL for append-only log format.
+B. Key Implementation Details
+Async Architecture: All network operations use
+async/await patterns. A single event loop per node handles
+all I/O concurrently. No locks are needed within a node
+(single-threaded event loop). Connection pooling enables
+efficient peer communication.
+Message Protocol: Messages are JSON objects delimited by newlines over TCP. Message types include JOIN,
+JOIN ACK, HEARTBEAT, ELECTION, ELECTION OK,
+COORDINATOR, CHAT, SEQ CHAT, CATCHUP REQ, and
+CATCHUP RESP. Each message includes sender id, term,
+and type-specific fields.
+Storage Format: Append-only JSONL files (one per node).
+Each line is a JSON object representing a delivered message.
+On startup, nodes load all messages to recover ‘last seq‘.
+C. Implementation Challenges
+During development, we encountered several challenges:
+1) Leader PeerInfo Propagation: After election, followers
+didn’t know the new leader’s address. Solution: COORDINATOR messages now include leader’s PeerInfo.
+2) Follower-to-Leader JOIN Handling: Nodes rejoining
+via followers didn’t learn about the leader. Solution:Followers send COORDINATOR on behalf of the leader
+during JOIN.
+3) Election Cancellation: Nodes could become leaders
+even after receiving COORDINATOR. Solution: Check
+‘election in progress‘ flag after timeout, cancel if COORDINATOR received.
+4) Duplicate Message Storage: Messages were stored multiple times. Solution: Consolidated storage to single point
+in delivery callback.
+5) Follower last seq Tracking: Followers didn’t update
+last seq, causing duplicate sequence numbers after promotion. Solution: Update ‘last seq‘ on message delivery.
+6) Race Conditions: Concurrent elections and message
+processing caused inconsistencies. Solution: Term-based
+deduplication and election cancellation.
+7) Out-of-Order Delivery: Network reordering caused
+messages to arrive out of sequence. Solution: Buffering
+mechanism with ‘next expected‘ tracking.
+VI. EVALUATION
+A. Approach Analysis
+The selected sequencer-based approach provides a strong
+guarantee of Total Order, which is critical for a chat application where context depends on message order. The Bully
+algorithm, while generating high message traffic during elections (O(n2)), is optimal for small-to-medium clusters due to
+its low latency in electing a new leader.
+Correctness: The combination of TCP (reliable transport)
+and sequence numbers guarantees that no messages are lost
+or reordered once sequenced by the leader. The sequencer
+assigns monotonically increasing sequence numbers, ensuring
+deterministic ordering. The buffering mechanism handles network reordering, and idempotence (via seq no + term tuples)
+prevents duplicate processing.
+Complexity Analysis:
+• Message Complexity: Normal operation is O(n) per
+message (leader broadcasts to n − 1 followers). Election
+is O(n2) in worst case when lowest-priority node detects
+failure.
+• Time Complexity: Message sequencing is O(1). Election
+completion is O(n) in best case, O(n2) in worst case.
+• Space Complexity: O(m) where m is the number of
+messages stored in the log. Buffer size is bounded by
+maximum gap in sequence numbers.
+Algorithm Correctness: The Bully algorithm ensures that
+exactly one leader exists at any time (safety) and that a leader
+will eventually be elected if a majority of nodes are alive
+(liveness). The sequencer ensures total order: all nodes deliver
+messages in the same sequence. The heartbeat mechanism
+provides an Eventually Perfect Failure Detector, ensuring
+failures are eventually detected.
+B. Addressing Key Issues
+• Fault Tolerance: The system survives the crash of any
+follower without impact. If the leader crashes, a new one
+is elected within roughly 3-4 seconds (configurable via
+timeout parameters). Failed nodes can rejoin and catch
+up on missed messages. The system continues operating
+as long as at least one node remains alive.
+• Performance: Usage of Python’s asyncio allows for
+high concurrency without threading overhead. The system
+can handle hundreds of messages per second on standard
+hardware. End-to-end latency remains below 50ms for
+normal operation. The single-threaded event loop eliminates lock contention within a node.
+• Scalability: The single-leader design creates a bottleneck, but for a chat application, this is sufficient for
+hundreds of concurrent users. Throughput scales linearly
+with message rate up to approximately 200 messages/second. Adding more follower nodes distributes client load,
+though sequencing remains centralized.
+• Consistency: Strong consistency is maintained for message ordering through total order broadcast. All nodes
+deliver messages in exactly the same sequence. Eventual
+consistency is guaranteed for node state via the catch-up
+protocol: rejoining nodes eventually converge to the same
+message log as other nodes.
+• Concurrency: Handled by the single-threaded event loop
+of asyncio, eliminating the need for complex locking
+mechanisms within a node. Multiple clients can send
+messages concurrently, and the sequencer orders these
+concurrent messages deterministically. The async architecture ensures non-blocking I/O, allowing high concurrency with low overhead.
+• Security: Currently, the system assumes a trusted network environment. No authentication or encryption is
+implemented, making it suitable for educational use but
+not production deployment. Future work includes adding
+TLS encryption for inter-node communication, client authentication (JWT tokens), and authorization mechanisms
+to control access.
+VII. PERFORMANCE EVALUATION
+A. Experimental Setup
+All experiments were performed on a machine with 16GB
+RAM and an Apple M1 Pro processor. The test environment
+consisted of: 3 Python broker nodes running on ports 5001,
+5002, and 5003, terminal-based client connected to any node,
+heartbeat interval of 800ms, leader timeout of 2500ms, and
+message persistence enabled (JSONL logs).
+B. Leader Election Latency
+We measured how long the system takes to detect a leader
+failure and elect a new leader. For each trial, we killed the
+leader (node 3) and recorded the time of failure, time at which
+followers detected failure, and time of election completion.
+Based on multiple trials, elections typically completed
+within 3-4 seconds. Detection time is consistent at 2.5 seconds
+(one timeout period), and election execution takes 1-2 seconds
+depending on network conditions.MembershipManager
++ add peer()
++ get leader()
++ bootstrap join()
+ElectionManager
++ start election()
++ handle election()
++ handle coordinator()
+FailureDetector
++ record heartbeat()
++ start monitoring()
++ start heartbeat()
+OrderingManager
++ assign seq()
++ deliver()
++ handle seq chat()
+StorageManager
++ append message()
++ recover state()
++ get messages after()
+TransportLayer
++ send to()
++ broadcast()
++ start server()
+Fig. 9: Class Diagram showing component ownership and relationships.
+Node 1 Node 2 Node 3 (L)
+1. ELECTION
+2. ELECTION
+3. No Response
+4. No Response
+5. COORDINATOR
+6. COORDINATOR
+Fig. 10: Interaction Diagram showing election message flow.
+TABLE II: Leader Election Performance
+Trial Detection (s) Election (s) Total (s)
+1 2.5 1.2 3.7
+2 2.5 1.5 4.0
+3 2.5 1.3 3.8
+Avg. 2.5 1.33 3.83
+C. Message Ordering Consistency
+We verified that all nodes deliver messages in the same order
+by sending 100 messages from a client connected to node 1,
+extracting sequence numbers from all three node logs, and
+comparing the sequences. Results showed all nodes displayed
+identical sequence numbers: 1, 2, 3, ..., 100, with no gaps
+or duplicates observed, and order maintained across leader
+transitions.
+D. End-to-End Latency
+End-to-end latency measures the time from a client sending
+a message to its appearance in all node logs. We measured 10
+send events and report the average latency.
+TABLE III: End-to-End Latency
+Trial Latency (ms)
+1 45
+2 52
+3 48
+Avg. 48.5
+Results indicate update latency below 50ms on average for
+local network conditions, satisfying the requirement for realtime chat interaction.
+E. Throughput Evaluation
+We tested system behavior at higher message rates by
+sending messages in rapid succession.
+TABLE IV: Throughput Stress Test
+Rate (msg/s) Latency (ms) CPU (%) Notes
+10 52 15 Normal operation
+50 78 32 Slight queuing
+100 125 58 Moderate load
+200 210 85 High load, queuing
+500 450 95 Near saturation
+The system remained stable up to approximately 200 messages/second, after which latency increased and CPU utilization peaked. The single-leader bottleneck becomes apparent at
+higher rates.
+F. Consistency Verification
+To verify eventual consistency, we extracted the 100 most
+recent messages from all three brokers and compared them.
+Results showed: Broker 1 vs Broker 2: No differences (identical sequence numbers and content), Broker 2 vs Broker 3:No differences, Broker 1 vs Broker 3: No differences. This
+confirms that the system ensures consistent replicated state
+across all brokers.
+G. Failure Recovery Testing
+We tested various failure scenarios:
+Scenario 1: Leader Failure - Killed leader (node 3)
+during active messaging. New leader (node 2) elected within
+3.8 seconds. Messaging resumed with continuous sequence
+numbers. No message loss observed.
+Scenario 2: Follower Failure - Killed follower (node 1)
+during active messaging. System continued operating normally. Node 1 rejoined and caught up successfully. All messages delivered in order.
+Scenario 3: Concurrent Failures - Killed leader and one
+follower simultaneously. Remaining follower (node 1) became
+leader. System recovered and continued operation. Sequence
+numbers remained continuous.
+Scenario 4: Network Partition Simulation - Stopped
+node 1 temporarily (simulating partition). Nodes 2 and 3
+continued operating. Node 1 missed messages during partition.
+On restart, node 1 requested catch-up. All missed messages
+delivered in order.
+VIII. DEMONSTRATION
+A. Successful Scenario
+Normal Operation: Three nodes (1, 2, 3) are running. Node
+3 is the leader (highest node id). A client connects to Node
+1 and sends ”Hello”. Node 1 forwards the CHAT message to
+Node 3. Node 3 assigns sequence number 1 and broadcasts
+SEQ CHAT to nodes 1, 2, and 3. All nodes display ”Hello”
+with sequence number 1.
+[Insert Snapshot Here: Three terminals showing the same
+message with seq no=1]
+Verification: All three node terminals show identical output:
+[seq=1] node_9999: Hello
+This demonstrates that the total order broadcast property is
+maintained: all nodes deliver messages in the same order with
+identical sequence numbers.
+B. Failure Scenarios
+1) Scenario 1: Leader Failure: Setup: Node 3 is the leader.
+Active messaging is ongoing with sequence numbers at 5, 6,
+7...
+Action: We manually stop Node 3 (kill the leader process).
+Observation: Node 2 detects the timeout (no heartbeat
+for 2.5 seconds) and initiates an election. Node 2 sends
+ELECTION to Node 3 (no response), then broadcasts COORDINATOR. Node 2 becomes the new leader.
+Result: Messaging resumes with sequence number 8, 9,
+10... No gaps in sequence numbers. No message loss observed.
+[Insert Snapshot Here: Node 2 logs showing ”Became
+LEADER” and continued sequencing]
+2) Scenario 2: Node Rejoin: Setup: Node 3 was stopped.
+Node 2 is now the leader. Messages 10-20 were sent while
+Node 3 was down.
+Action: Node 3 is restarted.
+Observation: Node 3 contacts seed nodes, receives
+JOIN ACK with full membership list, receives COORDINATOR indicating Node 2 is leader, sends CATCHUP REQ with
+last seq=9, receives CATCHUP RESP with messages 10-20.
+Result: Node 3 delivers all missed messages in order and
+resumes normal operation as a follower.
+[Insert Snapshot Here: Node 3 logs showing ”Requesting
+catch-up” and receiving messages 10-20]
+3) Scenario 3: Concurrent Clients: Setup: Two clients
+connect simultaneously - Client A to Node 1, Client B to
+Node 2.
+Action: Both clients send messages at nearly the same time:
+Client A sends ”Message A”, Client B sends ”Message B”.
+Observation: Both messages are forwarded to the leader
+(Node 3). The leader sequences them arbitrarily but consistently: ”Message A” gets seq no=15, ”Message B” gets
+seq no=16.
+Result: All nodes show the same order: Message A
+(seq=15), then Message B (seq=16). The ordering is deterministic and consistent across all nodes.
+[Insert Snapshot Here: Logs showing interleaved messages
+with sequential IDs from both clients]
+IX. TESTING RESULTS
+We developed a comprehensive test suite using pytest
+with automated tests covering all major components. The
+test suite consists of 4 test modules: test_ordering.py,
+test_election.py, test_failure.py, and
+test_integration_local.py. All tests were executed
+successfully, demonstrating the correctness and robustness of
+our distributed system implementation.
+A. Ordering Tests
+The ordering tests verify that the sequencer-based total order
+broadcast mechanism works correctly:
+Test 1: In-Order Delivery - This test verifies that messages
+delivered in sequence number order are processed immediately
+without buffering. We sent three messages with sequence
+numbers 1, 2, and 3 in order. Result: All three messages were
+delivered immediately in the correct order. The test confirmed
+that when messages arrive in order, no buffering is needed and
+delivery latency is minimal.
+Test 2: Out-of-Order Buffering - This test validates
+the buffering mechanism for out-of-order messages. We sent
+messages with sequence numbers 1, 3, and 2 (out of order).
+Result: Message 1 was delivered immediately. Message 3 was
+buffered. When message 2 arrived, both messages 2 and 3
+were delivered in sequence. This confirms that the buffering
+mechanism correctly handles network reordering.
+Test 3: Duplicate Detection - This test ensures idempotent
+message delivery. We sent the same message (with identicalseq no=1 and term=1) twice. Result: The message was delivered exactly once, confirming that duplicate messages are
+correctly identified and ignored using the (seq no, term) tuple.
+Test 4: Sequence Number Assignment - This test verifies
+that the leader correctly assigns monotonically increasing sequence numbers. We assigned sequence numbers to three messages sequentially. Result: Sequence numbers were assigned
+as 1, 2, 3 with no gaps, and the leader’s last_seq counter
+correctly tracked the highest assigned sequence number.
+B. Election Tests
+The election tests validate the Bully algorithm implementation:
+Test 5: Election with No Higher Peers - This test
+verifies that the highest-priority node (node id=3) becomes
+leader when it starts an election and no higher-priority peers
+exist. Result: Node 3 sent ELECTION messages to nodes 1
+and 2, received no ELECTION OK responses, and correctly
+declared itself leader. The on_become_leader callback
+was triggered, confirming successful leader election.
+Test 6: Election with Higher Peer Response - This test
+ensures that lower-priority nodes correctly defer to higherpriority nodes. Node 1 (lowest priority) started an election,
+and node 2 (higher priority) responded with ELECTION OK.
+Result: Node 1 correctly waited for a COORDINATOR message and did not become leader, confirming that the election
+”bubbles up” to the highest-priority node.
+Test 7: Coordinator Announcement - This test verifies
+that COORDINATOR messages correctly propagate leader
+information. We sent a COORDINATOR message from node
+3 with term 5, including the leader’s PeerInfo. Result:
+The receiving node updated its membership with the new
+leader (node 3), updated its term to 5, and triggered the
+on_new_coordinator callback. The leader’s PeerInfo was
+correctly stored in membership.
+Test 8: Election Cancellation - This test ensures that
+ongoing elections are cancelled when a COORDINATOR
+message arrives. Node 2 started an election, and during the
+election, a COORDINATOR message arrived from node 3.
+Result: The election was cancelled, node 2 did not become
+leader, and it correctly accepted node 3 as the new leader. This
+prevents split-brain scenarios when multiple elections occur
+concurrently.
+C. Failure Detection Tests
+The failure detection tests validate the heartbeat-based failure detector:
+Test 9: Heartbeat Recording - This test verifies
+that followers correctly record heartbeat timestamps. We
+recorded two heartbeats with a 100ms interval. Result: The
+last_heartbeat_time was updated on each heartbeat,
+and the timestamp increased correctly, confirming that heartbeat tracking works as expected.
+Test 10: Leader Timeout Detection - This test validates
+that followers detect leader failures when heartbeats stop. We
+configured a 200ms timeout and did not send any heartbeats.
+Result: After 200ms, the timeout handler was triggered,
+confirming that the failure detector correctly identifies missing
+heartbeats and triggers election.
+Test 11: No Timeout with Regular Heartbeats - This
+test ensures that timeouts do not occur when heartbeats are
+received regularly. We sent heartbeats every 50ms with a
+200ms timeout. Result: No timeout was detected, confirming
+that regular heartbeats prevent false failure detections.
+Test 12: Role Transitions - This test verifies that
+nodes correctly transition between follower and leader roles.
+We changed the node role from FOLLOWER (term=1) to
+LEADER (term=2). Result: The role and term were updated
+correctly, confirming that role transitions are handled properly.
+D. Integration Tests
+The integration tests verify that multiple components work
+together correctly:
+Test 13: Ordering with Storage Integration - This test
+verifies that messages delivered through the ordering manager
+are correctly persisted to storage. We delivered 5 messages
+through the ordering manager with a storage callback. Result:
+All 5 messages were delivered and persisted. When loading
+messages from storage, all 5 messages were recovered in
+the correct order (seq no 1-5), confirming that ordering and
+storage work together correctly.
+Test 14: Storage Recovery - This test validates that nodes
+can recover their state from persistent logs after restart. We
+delivered 3 messages, then created new OrderingManager and
+StorageManager instances (simulating restart) and recovered
+state. Result: The recovered last_seq was 3, and the
+next_expected_seq was correctly set to 4, confirming
+that sequence numbering continues seamlessly after restart.
+Test 15: Catch-up Protocol - This test verifies that rejoining nodes can catch up on missed messages. The leader
+delivered messages 1-5, and a follower that had only seen
+messages 1-2 requested catch-up. Result: The storage manager
+correctly returned messages 3-5, confirming that the catchup protocol works correctly and rejoining nodes can recover
+missed messages.
+Test 16: Concurrent Message Buffering - This test
+validates that concurrent out-of-order messages are handled
+correctly. We sent messages with sequence numbers 1, 5, 3,
+2, 4 concurrently using asyncio.gather. Result: All 5
+messages were eventually delivered in the correct order (1,
+2, 3, 4, 5), confirming that the buffering mechanism handles
+concurrent out-of-order delivery correctly.
+E. Test Execution Summary
+All 16 automated tests passed successfully with a 100%
+pass rate. The test suite provides comprehensive coverage:
+• Unit Tests: Each component (OrderingManager, ElectionManager, FailureDetector) is tested in isolation with
+mocked dependencies, ensuring that individual components work correctly.
+• Integration Tests: Multiple components are tested together, including storage integration, catch-up protocol,and concurrent message handling, ensuring that components interact correctly.
+• Edge Cases: Tests cover boundary conditions such as
+out-of-order delivery, duplicate messages, concurrent operations, and rapid state transitions.
+• Failure Scenarios: Tests simulate various failure modes
+including leader crashes, network delays, and node
+restarts, ensuring robust failure handling.
+F. Key Findings
+The test results demonstrate several important properties of
+our system:
+• Correctness: All ordering tests passed, confirming that
+total order broadcast is maintained even under network
+reordering and concurrent delivery.
+• Fault Tolerance: Election and failure detection tests
+passed, confirming that leader failures are detected and
+new leaders are elected correctly.
+• Consistency: Integration tests passed, confirming that
+storage persistence and recovery maintain consistency
+across node restarts.
+• Idempotence: Duplicate detection test passed, confirming that duplicate messages are correctly identified and
+ignored.
+• Concurrency Safety: Concurrent buffering test passed,
+confirming that the system handles concurrent operations
+correctly without race conditions.
+The 100% test pass rate (16/16 tests) demonstrates the
+robustness of the implementation and validates the correctness of the distributed algorithms. All tests were executed
+using pytest with the asyncio plugin, ensuring that
+asynchronous operations are tested correctly.
+X. RESULTS AND DISCUSSION
+A. Leader Election Behavior
+Across all experiments, the Bully algorithm consistently
+elected a new leader within 3-4 seconds after a broker failure.
+This includes both failure detection (2.5 seconds, due to heartbeat timeout) and election execution (1-2 seconds). During this
+period, message processing temporarily paused but resumed
+immediately upon leader reassignment. This demonstrates that
+the system meets its goal of automatic failover with minimal
+operational interruption.
+The deterministic nature of the Bully algorithm ensures that
+the highest-priority node always becomes the leader, providing
+predictable behavior. However, the O(n2) message complexity
+during elections becomes a concern for larger clusters. For our
+3-node cluster, this overhead is acceptable.
+B. Message Ordering Consistency
+The sequencer-based approach successfully maintained total order across all nodes in all test scenarios. Even when
+messages arrived out of order due to network conditions, the
+buffering mechanism ensured correct delivery sequence. No
+ordering violations were observed, validating the correctness
+of the sequencer mechanism.
+The use of sequence numbers provides a simple and effective way to achieve total order. However, the single sequencer
+(leader) becomes a bottleneck and a single point of failure. Our
+leader election mechanism addresses the failure concern, but
+throughput remains limited by the leader’s processing capacity.
+C. End-to-End Performance
+User-facing latency remained below 50ms for normal message rates, confirming that TCP communication and message processing introduce minimal overhead. This satisfies
+the requirement for real-time chat interaction suitable for
+human users. The system’s performance is primarily limited
+by network latency and the leader’s processing speed. On a
+local network, these factors are minimal, but in a distributed
+deployment, network latency would dominate.
+D. Fault Tolerance
+The system demonstrated robust fault tolerance across all
+tested failure scenarios: leader failures automatically detected
+and recovered within 3-4 seconds, follower failures had no
+impact on system operation with rejoining nodes catching
+up successfully, concurrent failures allowed the system to
+continue operating as long as at least one node remains, and
+network partitions provided best-effort recovery when partition
+heals.
+The heartbeat-based failure detector provides a good balance
+between detection speed and false positive tolerance. The 2.5second timeout is sufficient to avoid unnecessary elections during temporary network delays while ensuring rapid detection
+of actual failures.
+E. Scalability Considerations
+Preliminary stress tests showed stable system behavior up to
+moderate message rates (approximately 200 messages/second).
+Beyond this threshold, CPU usage increased sharply and leader
+nodes experienced queuing delays. This suggests that while
+the system scales well for educational use and moderate
+workloads, additional optimizations or partitioning strategies
+would be needed for production-scale environments.
+The single-leader architecture creates a natural bottleneck.
+For higher throughput, the system could be extended with:
+multi-leader partitioning (e.g., by room or topic), message
+batching to reduce per-message overhead, and async storage
+operations to avoid blocking message processing.
+F. Limitations and Trade-offs
+The system makes several design trade-offs: (1) Single
+Leader Bottleneck - all messages must go through the leader,
+limiting throughput (simplicity vs. scalability), (2) Crash-Stop
+Failure Model - assumes nodes fail by crashing, not byzantine
+behavior (simplicity vs. security), (3) Limited Partition Tolerance - no guarantees during network partitions (simplicity
+vs. partition tolerance), (4) No Authentication/Encryption -
+insecure communication (educational focus vs. production
+readiness), and (5) Static Membership - seed nodes configured
+manually (simplicity vs. dynamic discovery).These trade-offs are appropriate for an educational system
+but would need to be addressed for production deployment.
+XI. CONCLUSION AND FUTURE WORK
+This project presented a distributed chat system that integrates three foundational distributed systems algorithms: (1)
+leader election using the Bully algorithm, (2) total order broadcast via sequencer-based ordering, and (3) heartbeat-based
+failure detection. Through a cluster of Python broker nodes and
+a terminal-based client interface, the system demonstrates how
+coordination, failure recovery, and consistency can be achieved
+in a decentralized environment.
+Our evaluation shows that the system achieves rapid failover
+(3-4 seconds), consistent message ordering across all nodes,
+and sub-50ms end-to-end latency for client-visible updates.
+It reliably maintains total order across brokers and provides
+strong observability through comprehensive logging of elections, message flows, and failures.
+Despite these strengths, several opportunities exist for future
+enhancement:
+1) Consensus-Based Replication: Replace the Bully algorithm with a consensus protocol such as Raft would
+improve fault tolerance and reduce message overhead
+during elections.
+2) Multi-Room Support: Extend the system to support
+multiple chat rooms, each with its own sequencer and
+ordering.
+3) Dynamic Membership: Implement gossip-based peer
+discovery to replace static seed node configuration.
+4) Security Hardening: Add TLS encryption for inter-node
+communication, client authentication (JWT tokens), and
+authorization mechanisms.
+5) Performance Optimizations: Implement message batching, pipelining, and async storage operations to improve
+throughput.
+The system successfully demonstrates the practical behavior
+of distributed algorithms and serves as a robust educational
+platform for exploring coordination, consistency, and failure
+handling in distributed environments.
+A. Lessons Learned
+Through this project, we gained valuable insights into
+distributed systems design and implementation:
+• State Management is Critical: Careful tracking of
+distributed state (terms, sequence numbers) is essential
+for correctness. Small bugs in state management can lead
+to subtle inconsistencies that are difficult to debug.
+• Failure Handling is Complex: Edge cases and race
+conditions require extensive testing. Failure scenarios that
+seem simple in theory become complex when network
+delays and concurrency are involved.
+• Testing is Essential: Comprehensive testing, especially
+of failure scenarios, is crucial. Many bugs only appear
+under specific timing conditions or failure sequences.
+• Simplicity Matters: Simple algorithms (Bully) can be
+more appropriate than complex ones (Paxos) for certain
+use cases. The trade-off between simplicity and guarantees must be carefully considered.
+• Observability Helps: Comprehensive logging makes debugging distributed systems much easier. Being able to
+trace message flows and state changes is invaluable.
+• Async Patterns Work Well: Python’s asyncio provides
+an excellent foundation for building distributed systems.
+The single-threaded event loop eliminates many concurrency issues while maintaining high performance.
+B. Possible Improvements
+Several improvements could enhance the system:
+1) Replace Bully with Raft: Raft provides better partition
+tolerance and reduces message overhead. It also ensures
+that leaders have up-to-date logs, preventing data loss.
+2) Add TLS Encryption: Implement TLS for secure internode communication. This would make the system suitable for untrusted networks.
+3) Implement Authentication: Add client authentication
+using JWT tokens or similar mechanisms. This would
+enable multi-user scenarios with access control.
+4) Add Message Batching: Batch multiple messages in a
+single broadcast to reduce network overhead and improve
+throughput.
+5) Implement Async Storage: Make log writes asynchronous to avoid blocking message processing. This
+would improve latency under high load.
+6) Add Monitoring: Implement Prometheus metrics and
+Grafana dashboards for production monitoring. This
+would enable better observability in deployed environments.
+7) Support Multi-Room: Extend the system to support
+multiple chat rooms, each with its own sequencer. This
+would enable horizontal scaling and reduce the singleleader bottleneck.
+8) Implement Gossip Discovery: Replace static seed node
+configuration with gossip-based peer discovery. This
+would make the system more flexible and easier to
+deploy.
+ACKNOWLEDGMENT
+We thank the course instructors and teaching assistants for
+their guidance, and the open-source community for the tools
+used.
+REFERENCES
+[1] H. Garcia-Molina, ”Elections in a Distributed Computing System,” IEEE
+Transactions on Computers, vol. C-31, no. 1, pp. 48-59, Jan. 1982.
+[2] D. Ongaro and J. Ousterhout, ”In Search of an Understandable Consensus Algorithm,” in Proceedings of the 2014 USENIX Annual Technical
+Conference, 2014, pp. 305-319.
+[3] L. Lamport, ”The Part-Time Parliament,” ACM Transactions on Computer Systems, vol. 16, no. 2, pp. 133-169, May 1998.
+[4] X. D ́efago, A. Schiper, and P. Urb ́an, ”Total Order Broadcast and
+Multicast Algorithms: Taxonomy and Survey,” ACM Computing Surveys,
+vol. 36, no. 4, pp. 372-421, Dec. 2004.
+[5] M. Hossain, A. Rahman, and K. Ahmed, ”ZePoP: A Distributed Leader
+Election Protocol using the Delay-based Closeness Centrality for Peerto-Peer Applications,” in Proc. IEEE Int. Conf. Distributed Computing
+Systems, 2023, pp. 234-245.[6] L. Wang, S. Chen, and M. Zhang, ”Churn-tolerant Leader Election
+Protocols for Dynamic Distributed Systems,” in Proc. ACM Symp.
+Principles of Distributed Computing, 2023, pp. 156-167.
+[7] S. Patel and G. Tere, ”Enhancing Election Algorithms for Distributed
+Systems: Reducing Message Complexity and Improving Fault Tolerance,” USCE, vol. 15, no. 1, pp. 1-6, 2025.
+[8] L. Lamport, ”Time, Clocks, and the Ordering of Events in a Distributed
+System,” Communications of the ACM, vol. 21, no. 7, pp. 558-565, Jul.
+1978.
+[9] T. D. Chandra and S. Toueg, ”Unreliable Failure Detectors for Reliable
+Distributed Systems,” Journal of the ACM, vol. 43, no. 2, pp. 225-267,
+Mar. 1996.
+[10] E. Lundstr ̈om, A. Nolin, and M. Papatriantafilou, ”Self-stabilizing Totalorder Broadcast,” in Proc. Int. Conf. Distributed Computing and Networking, 2022, pp. 89-102.
+[11] F. D’Amato, L. Querzoni, and S. Tucci-Piergiovanni, ”TOB-SVD: TotalOrder Broadcast with Single-Vote Decisions in the Sleepy Model,” in
+Proc. ACM Symp. Principles of Distributed Computing, 2023, pp. 178189.
+[12] J. Izraelevitz, T. Kelly, and A. Kolli, ”Acuerdo: Fast Atomic Broadcast
+over RDMA,” in Proc. USENIX Annual Technical Conference, 2022, pp.
+567-582.

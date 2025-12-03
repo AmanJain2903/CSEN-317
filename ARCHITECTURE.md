@@ -462,11 +462,11 @@ Action:
   6. Network partition simulation
 
 ### Test Coverage
-- ✅ Ordering: In-order, out-of-order, duplicates, concurrent messages
-- ✅ Election: No higher peers, with responses, coordinator with PeerInfo, election cancellation
-- ✅ Failure: Heartbeat recording, timeout detection, role transitions
-- ✅ Storage: Persistence, recovery, catch-up protocol
-- ✅ Integration: Storage + ordering, recovery scenario
+- Ordering: In-order, out-of-order, duplicates, concurrent messages
+- Election: No higher peers, with responses, coordinator with PeerInfo, election cancellation
+- Failure: Heartbeat recording, timeout detection, role transitions
+- Storage: Persistence, recovery, catch-up protocol
+- Integration: Storage + ordering, recovery scenario
 
 ## Performance Characteristics
 
