@@ -1,18 +1,19 @@
-# Distributed Chat System
+# Distributed Chat System - Peer-to-Peer
 
-A production-like distributed chat application demonstrating key distributed systems concepts including total order broadcast, leader election, and failure detection.
+A fully decentralized peer-to-peer distributed chat application demonstrating key distributed systems concepts including total order broadcast, leader election, and failure detection.
 
 ## Project Overview
 
-This project implements a distributed chat system where multiple peer nodes form a cluster, maintain total message ordering through a sequencer-based approach, handle leader failures through the Bully algorithm, and provide eventual consistency across all nodes.
+This project implements a **fully peer-to-peer distributed chat system** where all peers are equal participants - each peer is both a user interface and a complete distributed system node. Peers form a cluster, maintain total message ordering through a sequencer-based approach, handle leader failures through the Bully algorithm, and provide eventual consistency across all nodes.
 
 ### Key Features
 
-- **Total Order Broadcast**: Messages are delivered in the same order across all nodes using sequence numbers assigned by a leader
-- **Leader Election**: Bully algorithm for automatic leader election based on node priority with election cancellation
+- **Fully Peer-to-Peer Architecture**: Each peer is both client and node - completely decentralized
+- **Total Order Broadcast**: Messages are delivered in the same order across all peers using sequence numbers assigned by a leader
+- **Leader Election**: Bully algorithm for automatic leader election based on peer priority with election cancellation
 - **Failure Detection**: Heartbeat-based monitoring with automatic failover
 - **Persistence**: Append-only log files for crash recovery
-- **Catch-up Protocol**: Nodes can request missing messages when rejoining
+- **Catch-up Protocol**: Peers can request missing messages when rejoining
 - **Exactly-once Delivery**: Idempotent message handling using (seq_no, term) tuples
 - **Seamless Failover**: Leader PeerInfo propagation ensures immediate connectivity after elections
 - **Split-brain Prevention**: Election cancellation when higher-priority coordinator appears
@@ -27,25 +28,27 @@ This project implements a distributed chat system where multiple peer nodes form
 
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   Node 1    │◄───────►│   Node 2    │◄───────►│   Node 3    │
+│   Peer 1    │◄───────►│   Peer 2    │◄───────►│   Peer 3    │
 │  (Follower) │         │  (Follower) │         │   (Leader)  │
+│  User + Node│         │  User + Node│         │  User + Node│
 └─────────────┘         └─────────────┘         └─────────────┘
        │                       │                       │
        │                       │                       │
        └───────────────────────┴───────────────────────┘
-                    All communicate via TCP
+           All peers communicate via TCP (P2P)
 ```
 
 ### Message Flow
 
-1. **Client sends CHAT** → Local node
-2. **Follower forwards** → Leader  
-3. **Leader assigns seq_no** → Broadcasts SEQ_CHAT to all nodes
-4. **All nodes deliver in order** → Based on sequence number
+1. **User types message** → Local peer
+2. **Follower peer forwards** → Leader peer
+3. **Leader assigns seq_no** → Broadcasts SEQ_CHAT to all peers
+4. **All peers deliver in order** → Based on sequence number
 5. **Persist to log** → Append-only file storage
 
 ### Components
 
+**Core Distributed System:**
 - `common.py`: Data structures, message schemas, enums
 - `transport.py`: Async TCP communication layer
 - `membership.py`: Cluster membership management
@@ -53,12 +56,67 @@ This project implements a distributed chat system where multiple peer nodes form
 - `election.py`: Bully algorithm implementation
 - `ordering.py`: Sequence number assignment and ordered delivery
 - `storage.py`: Persistent message logs
-- `node.py`: Main node orchestrator
-- `client_tui.py`: Terminal UI client
+
+**P2P Interface:**
+- `peer.py`: ChatPeer class combining user interface + distributed node
+- `peer_tui.py`: Terminal UI for peer-to-peer chat
 
 ## Quick Start
 
-### Local Development
+### Setup Environment
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd CSEN317-Distributed-Systems
+
+# Create virtual environment (Python 3.10+ required)
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Create data directory
+mkdir -p data/logs
+```
+
+### Start Peer-to-Peer Cluster
+
+```bash
+# Terminal 1 - First peer (bootstrap)
+python -m src.peer_tui --id 1 --host 127.0.0.1 --port 6001
+
+# Terminal 2 - Second peer
+python -m src.peer_tui --id 2 --host 127.0.0.1 --port 6002 --seed 1:127.0.0.1:6001
+
+# Terminal 3 - Third peer
+python -m src.peer_tui --id 3 --host 127.0.0.1 --port 6003 --seed 1:127.0.0.1:6001
+
+# Type messages directly in any terminal:
+peer_1> Hello from peer 1!
+peer_2> Hi from peer 2!
+
+# Commands:
+/status   # Show peer status
+/quit     # Exit
+```
+
+You should see:
+- Peers discovering each other
+- Election process (Peer 3 becomes leader)
+- Heartbeats being sent/received
+- Messages appearing on all peers with sequence numbers
+
+### Quick Start Script
+
+Use the provided script for automated startup:
+
+```bash
+./run_p2p.sh
+```
+
+See `P2P_README.md` for detailed documentation.
 
 #### 1. Setup Environment
 
@@ -73,118 +131,6 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Verify setup (optional)
-./verify_setup.sh
-```
-
-#### 2. Create Data Directory
-
-```bash
-mkdir -p data/logs
-```
-
-#### 3. Start Three Nodes
-
-Open three terminal windows and run:
-
-```bash
-# Terminal 1 - Node 1
-python -m src.node --config configs/node1.yml
-
-# Terminal 2 - Node 2
-python -m src.node --config configs/node2.yml
-
-# Terminal 3 - Node 3 (will become leader due to highest priority)
-python -m src.node --config configs/node3.yml
-```
-
-You should see logs indicating:
-- Nodes discovering each other
-- Election process
-- Node 3 becoming the leader
-- Heartbeats being sent/received
-
-#### 4. Connect Client and Send Messages
-
-Open a fourth terminal:
-
-```bash
-# Connect to node 1
-python -m src.client_tui --host 127.0.0.1 --port 5001
-
-# Type messages and press Enter
-> Hello from client!
-> This message will have the same order on all nodes
-```
-
-Check all three node terminals - they should all display messages in the same order with identical sequence numbers.
-
-### Docker Compose Deployment
-
-#### 1. Build and Start Cluster
-
-```bash
-cd deploy
-docker compose up --build
-```
-
-This starts three nodes (chat_node1, chat_node2, chat_node3) in a Docker network.
-
-#### 2. View Logs
-
-```bash
-# All nodes
-docker compose logs -f
-
-# Specific node
-docker compose logs -f chat_node1
-```
-
-#### 3. Connect Client to a Node
-
-```bash
-# Exec into a container
-docker exec -it chat_node1 bash
-
-# Inside container, run client
-python -m src.client_tui --host chat_node2 --port 5002
-```
-
-Or from host machine:
-
-```bash
-python -m src.client_tui --host 127.0.0.1 --port 5001
-```
-
-#### 4. Test Leader Failure
-
-```bash
-# Check which node is leader (highest node_id = 3)
-docker compose logs chat_node3 | grep LEADER
-
-# Kill the leader
-docker stop chat_node3
-
-# Watch election in remaining nodes
-docker compose logs -f chat_node2
-
-# Node 2 should become new leader
-
-# Restart node 3
-docker start chat_node3
-
-# It will rejoin as follower and catch up
-```
-
-#### 5. Stop Cluster
-
-```bash
-docker compose down
-
-# Remove volumes too (deletes logs)
-docker compose down -v
-```
 
 ## Running Tests
 
@@ -211,76 +157,170 @@ pytest tests/ --cov=src --cov-report=html
 - `test_failure.py` (4 tests): Heartbeat recording, timeout detection, role changes
 - `test_integration_local.py` (4 tests): End-to-end scenarios with storage and recovery
 
-## Configuration Reference
+## P2P Testing
 
-Each node requires a YAML configuration file:
+### Basic P2P Messaging
 
-```yaml
-node_id: 3              # Unique integer ID (higher = higher priority)
-host: 0.0.0.0          # Listen address
-port: 5003             # Listen port
-seed_nodes:            # Bootstrap peers
-  - { node_id: 1, host: "chat_node1", port: 5001 }
-  - { node_id: 2, host: "chat_node2", port: 5002 }
-heartbeat_interval_ms: 800    # How often leader sends heartbeats
-leader_timeout_ms: 2500       # When followers suspect leader failure
-log_dir: "/data/logs"         # Directory for message logs
+```bash
+# Terminal 1 - Bootstrap peer
+python -m src.peer_tui --id 1 --port 6001
+
+# Terminal 2 - Second peer
+python -m src.peer_tui --id 2 --port 6002 --seed 1:127.0.0.1:6001
+
+# Terminal 3 - Third peer
+python -m src.peer_tui --id 3 --port 6003 --seed 1:127.0.0.1:6001
+
+# Type in any terminal:
+peer_1> Test message
+/status  # Check role and leader
+```
+
+### P2P Leader Failure Test
+
+```bash
+# 1. Start 3 peers (peer 3 becomes leader)
+# 2. Send messages from peer 1 or 2
+# 3. Kill peer 3 (Ctrl+C or /quit)
+# 4. Peer 2 should become leader
+# 5. Continue sending messages - ordering maintained
+```
+
+### P2P Scalability Test
+
+```bash
+# Automated test with N peers
+python ScaleTestP2P.py
+
+# This will:
+# - Start multiple peers automatically
+# - Send concurrent messages
+# - Verify total ordering
+# - Test leader election with failures
+```
+
+### P2P Reconnection Test
+
+```bash
+# 1. Start 3 peers
+# 2. Send messages: "msg1", "msg2", "msg3"
+# 3. Kill peer 2 (Ctrl+C)
+# 4. Send more messages: "msg4", "msg5"
+# 5. Restart peer 2: python -m src.peer_tui --id 2 --port 6002 --seed 1:127.0.0.1:6001
+# 6. Peer 2 catches up and receives all messages in order
+```
+
+### Quick P2P Test Script
+
+Use the provided script for fast startup:
+
+```bash
+# Edit run_p2p.sh to set number of peers
+./run_p2p.sh
+```
+
+## Peer Configuration
+
+Peers are configured via command-line arguments (no YAML files needed):
+
+```bash
+python -m src.peer_tui \
+  --id 1 \                    # Unique peer ID (higher = higher priority)
+  --host 127.0.0.1 \          # Listen address
+  --port 6001 \               # Listen port
+  --seed 2:127.0.0.1:6002     # Bootstrap peer(s) (optional)
 ```
 
 ### Configuration Parameters
 
-- **node_id**: Must be unique; determines election priority (higher wins)
-- **host**: Usually `0.0.0.0` to listen on all interfaces
-- **port**: Unique port per node
-- **seed_nodes**: List of peers to contact on startup (excluding self)
-- **heartbeat_interval_ms**: Leader heartbeat frequency (default: 800ms)
-- **leader_timeout_ms**: Follower timeout threshold (default: 2500ms)
-- **log_dir**: Path for persistent message storage
+- **--id**: Must be unique; determines election priority (higher wins)
+- **--host**: Listen address (default: 0.0.0.0)
+- **--port**: Unique port per peer (P2P uses 6000+)
+- **--seed**: Seed peer for joining cluster (format: `id:host:port`, can specify multiple)
+- **Heartbeat interval**: 800ms (hardcoded in peer.py)
+- **Leader timeout**: 2500ms (hardcoded in peer.py)
+- **Log directory**: `data/logs/` (auto-created)
 
 ## Demo Scenarios
 
-### Scenario 1: Normal Operation
+### Scenario 1: Basic Peer-to-Peer Messaging
 
-1. Start all three nodes
-2. Connect client to any node
-3. Send messages
-4. Verify all nodes show identical order
+1. Start three peers (see Quick Start above)
+2. Send messages from any peer
+3. Observe messages appear on all peers with sequence numbers
 
-**Expected**: All nodes display messages with same sequence numbers
+**Expected**: All peers display messages in identical order
 
 ### Scenario 2: Leader Failure and Recovery
 
-1. Start all three nodes (node 3 is leader)
-2. Send some messages
-3. Kill node 3 (leader)
-4. Watch election logs - node 2 becomes leader
-5. Send more messages - ordering continues
-6. Restart node 3 - rejoins as follower, catches up
+1. Start three peers (peer 3 becomes leader)
+2. Send messages: "Before failure"
+3. Kill peer 3 (Ctrl+C)
+4. Watch election - peer 2 becomes leader
+5. Send: "After failure"
+6. Restart peer 3 (rejoins as follower)
 
-**Expected**: No message loss, ordering maintained across leadership change
+**Expected**: Ordering maintained, peer 3 catches up on restart
 
-### Scenario 3: Network Partition Healing
+### Scenario 3: Concurrent Messages
 
-1. Start all nodes
-2. Send messages
-3. Stop node 1 temporarily
-4. Send more messages (node 1 misses these)
-5. Restart node 1
-6. Node 1 requests catch-up
+1. Start three peers
+2. Rapidly send messages from all three peers simultaneously
+3. Observe all peers agree on message order
 
-**Expected**: Node 1 receives all missed messages in order
+**Expected**: Single total order across all peers despite concurrent sends
 
-### Scenario 4: Concurrent Messages
+### Scenario 4: Network Partition Healing
 
-1. Start all nodes
-2. Connect multiple clients to different nodes
-3. Send messages concurrently from all clients
+1. Start three peers
+2. Send messages: "msg1", "msg2"
+3. Stop peer 1 (Ctrl+C)
+4. Send: "msg3", "msg4" (peer 1 misses these)
+5. Restart peer 1 with same seed
+6. Peer 1 catches up
 
-**Expected**: All nodes agree on a single total order
+**Expected**: Peer 1 receives all missed messages in correct order
 
 ## Troubleshooting
 
-### Nodes Can't Connect
+### Peers Can't Join Cluster
+
+**Problem**: New peer fails to connect to seed peer
+
+**Solution**:
+- Verify seed peer is running: `ps aux | grep peer_tui`
+- Check seed peer address/port: `--seed 1:127.0.0.1:6001`
+- Ensure bootstrap peer started first
+- Check firewall allows connections on port 6000+
+
+### Messages Not Appearing
+
+**Problem**: Message sent but not visible on other peers
+
+**Solution**:
+- Run `/status` on all peers to verify cluster membership
+- Check that a leader is elected (use `/status`)
+- Ensure all peers connected to same cluster
+- Verify no firewall blocking peer-to-peer connections
+
+#### P2P Port Conflicts
+
+**Problem**: "Address already in use" when starting peer
+
+**Solution**:
+```bash
+# Find process using port
+lsof -i :6001
+
+# Kill old peer process
+kill -9 <PID>
+
+# Or use different port: --port 6010
+```
+
+### Client-Server Mode Issues
+
+#### Nodes Can't Connect
 
 **Problem**: Nodes fail to discover each other
 
@@ -290,7 +330,7 @@ log_dir: "/data/logs"         # Directory for message logs
 - For Docker: ensure all containers are on same network
 - For local: use `127.0.0.1` or `localhost` in configs
 
-### No Leader Elected
+#### No Leader Elected
 
 **Problem**: No node becomes leader
 
@@ -300,30 +340,36 @@ log_dir: "/data/logs"         # Directory for message logs
 - Ensure at least one node can contact others
 - Check for network connectivity issues
 
-### Messages Not Delivered
+#### Messages Not Delivered
 
-**Problem**: Messages sent but not appearing on all nodes
+- Check that a leader is elected (use `/status`)
+- Ensure all peers connected to same cluster
+- Verify no firewall blocking peer-to-peer connections
 
-**Solution**:
-- Verify leader is elected (check logs)
-- Ensure all nodes are connected (check membership logs)
-- Check for errors in transport layer logs
-- Verify follower can reach leader
+### Port Conflicts
 
-### Port Already in Use
-
-**Problem**: "Address already in use" error
+**Problem**: "Address already in use" when starting peer
 
 **Solution**:
 ```bash
 # Find process using port
-lsof -i :5001
+lsof -i :6001
 
-# Kill the process
+# Kill old peer process
 kill -9 <PID>
 
-# Or use different ports in config
+# Or use different port: --port 6010
 ```
+
+### No Leader Elected
+
+**Problem**: No peer becomes leader
+
+**Solution**:
+- Check logs for election messages
+- Verify peer IDs are unique and properly configured
+- Ensure at least one peer can contact others
+- Check for network connectivity issues
 
 ### Storage/Permission Errors
 
@@ -334,8 +380,6 @@ kill -9 <PID>
 # Create directory with proper permissions
 mkdir -p data/logs
 chmod 755 data/logs
-
-# For Docker, ensure volumes are mounted correctly
 ```
 
 ## Message Protocol

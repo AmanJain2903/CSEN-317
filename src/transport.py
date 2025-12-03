@@ -58,6 +58,9 @@ class TransportLayer:
         self.server: Optional[asyncio.Server] = None
         self.connections: dict[tuple[str, int], Connection] = {}
         self.message_handler: Optional[Callable[[Message, Connection], Awaitable[None]]] = None
+        # Track connection failures to detect dead peers
+        self.failure_counts: dict[tuple[str, int], int] = {}
+        self.max_failures: int = 3  # Remove peer after this many failures
     
     def set_message_handler(self, handler: Callable[[Message, Connection], Awaitable[None]]):
         """Set the callback for handling incoming messages."""
@@ -99,14 +102,25 @@ class TransportLayer:
             reader, writer = await asyncio.open_connection(host, port)
             conn = Connection(reader, writer)
             self.connections[addr] = conn
+            # Reset failure count on successful connection
+            if addr in self.failure_counts:
+                del self.failure_counts[addr]
             self.logger.debug(f"Connected to {host}:{port}")
             return conn
         except Exception as e:
-            self.logger.error(f"Failed to connect to {host}:{port}: {e}")
+            # Track failures
+            addr = (host, port)
+            self.failure_counts[addr] = self.failure_counts.get(addr, 0) + 1
+            
+            # Only log error on first few failures
+            if self.failure_counts[addr] <= 2:
+                self.logger.warning(f"Failed to connect to {host}:{port}: {e}")
+            else:
+                self.logger.debug(f"Failed to connect to {host}:{port}: {e}")
             return None
     
     async def send_to(self, host: str, port: int, message: Message) -> bool:
-        """Send a message to a specific peer."""
+        """Send a message to a specific peer. Returns True if successful."""
         conn = await self.connect(host, port)
         if conn:
             success = await conn.send(message)
@@ -115,8 +129,25 @@ class TransportLayer:
                 addr = (host, port)
                 if addr in self.connections:
                     del self.connections[addr]
+                self.failure_counts[addr] = self.failure_counts.get(addr, 0) + 1
+            else:
+                # Reset failure count on successful send
+                addr = (host, port)
+                if addr in self.failure_counts:
+                    del self.failure_counts[addr]
             return success
         return False
+    
+    def get_failed_peers(self) -> list[tuple[str, int]]:
+        """Get list of peers that have exceeded failure threshold."""
+        return [addr for addr, count in self.failure_counts.items() 
+                if count >= self.max_failures]
+    
+    def reset_failure_count(self, host: str, port: int):
+        """Reset failure count for a peer."""
+        addr = (host, port)
+        if addr in self.failure_counts:
+            del self.failure_counts[addr]
     
     async def broadcast(self, peers: list[tuple[str, int]], message: Message):
         """Broadcast a message to multiple peers."""

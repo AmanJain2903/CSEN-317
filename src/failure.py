@@ -75,6 +75,21 @@ class FailureDetector:
                     peer_addrs = [p.address() for p in peers]
                     await transport.broadcast(peer_addrs, heartbeat_msg)
                     self.logger.debug(f"Sent heartbeat to {len(peers)} peers")
+                    
+                    # Check for failed peers and remove them from membership
+                    failed_peers = transport.get_failed_peers()
+                    for addr in failed_peers:
+                        # Find the node_id for this address
+                        host, port = addr
+                        for peer in peers:
+                            if peer.host == host and peer.port == port:
+                                self.logger.warning(
+                                    f"Removing unresponsive peer: node_{peer.node_id} at {host}:{port}"
+                                )
+                                membership.remove_peer(peer.node_id)
+                                # Reset failure count after removal
+                                transport.reset_failure_count(host, port)
+                                break
                 
                 await asyncio.sleep(self.heartbeat_interval)
         except asyncio.CancelledError:
@@ -82,7 +97,7 @@ class FailureDetector:
         except Exception as e:
             self.logger.error(f"Heartbeat sender error: {e}")
     
-    async def start_heartbeat_monitor(self):
+    def start_heartbeat_monitor(self):
         """Start monitoring for leader heartbeats (for followers)."""
         if self.monitor_task:
             self.monitor_task.cancel()

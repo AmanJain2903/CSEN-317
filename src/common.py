@@ -63,6 +63,7 @@ class Message:
     payload: Optional[Any] = None
     membership: Optional[List[Dict[str, Any]]] = None
     last_seq: Optional[int] = None  # for catchup
+    leader_id: Optional[int] = None  # current leader
     
     def __post_init__(self):
         if self.msg_id is None and self.type in [MessageType.CHAT, MessageType.SEQ_CHAT]:
@@ -86,6 +87,8 @@ class Message:
             data['membership'] = self.membership
         if self.last_seq is not None:
             data['last_seq'] = self.last_seq
+        if self.leader_id is not None:
+            data['leader_id'] = self.leader_id
         return json.dumps(data)
     
     @classmethod
@@ -102,6 +105,7 @@ class Message:
             payload=obj.get('payload'),
             membership=obj.get('membership'),
             last_seq=obj.get('last_seq'),
+            leader_id=obj.get('leader_id'),
         )
 
 

@@ -1,116 +1,133 @@
-# Quick Start Guide
+# Quick Start Guide - P2P Mode
 
-Get the Distributed Chat System running in 5 minutes.
+Get the P2P Distributed Chat System running in 5 minutes.
 
-## Option 1: Docker Compose (Recommended)
+## Peer-to-Peer Setup
 
-```bash
-# 1. Navigate to deploy directory
-cd deploy
-
-# 2. Start the cluster
-docker compose up --build
-
-# 3. In another terminal, connect a client
-docker exec -it chat_node1 python -m src.client_tui --host chat_node2 --port 5002
-
-# 4. Type messages and see them appear on all nodes!
-
-# 5. Test leader failure
-docker stop chat_node3  # Kill the leader
-# Watch node 2 become new leader in logs
-
-# 6. Cleanup
-docker compose down -v
-```
-
-## Option 2: Local Python
+Each peer is a complete node that participates in the distributed system.
 
 ```bash
-# 1. Setup
-python3.11 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# 1. Install dependencies
 pip install -r requirements.txt
 mkdir -p data/logs
 
-# 2. Start three nodes (in separate terminals)
-python -m src.node --config configs/node1.yml
-python -m src.node --config configs/node2.yml
-python -m src.node --config configs/node3.yml
+# 2. Start three peers (in separate terminals)
+# Terminal 1 - Peer 1 (bootstrap)
+python -m src.peer_tui --id 1 --host 127.0.0.1 --port 6001
 
-# 3. Connect client (in a 4th terminal)
-python -m src.client_tui --host 127.0.0.1 --port 5001
+# Terminal 2 - Peer 2 (joins via peer 1)
+python -m src.peer_tui --id 2 --host 127.0.0.1 --port 6002 --seed 1:127.0.0.1:6001
 
-# 4. Send messages!
-> Hello distributed world!
+# Terminal 3 - Peer 3 (joins via peer 1)
+python -m src.peer_tui --id 3 --host 127.0.0.1 --port 6003 --seed 1:127.0.0.1:6001
+
+# 3. Type messages directly in any peer terminal!
+peer_1> Hello from peer 1!
+peer_2> Message from peer 2!
+peer_3> Peer 3 says hi!
+
+# 4. Test leader failure
+# Kill peer with highest ID (leader)
+# Ctrl+C in Terminal 3
+# Watch remaining peers elect new leader
+# Continue sending messages from peer 1 or 2
+
+# 5. Commands within peer
+/status   # Show peer status, role, leader
+/quit     # Exit gracefully
 ```
 
-## Option 3: Using Makefile
+## Using Quick Start Script
 
 ```bash
-# Setup
-make setup-dev
-source venv/bin/activate
-make install
+# Automated startup script
+./run_p2p.sh
+```
 
-# Start nodes (in separate terminals)
-make run-node1
-make run-node2
-make run-node3
+## Using Makefile
 
-# Connect client (in another terminal)
-make client
+```bash
+# Run tests
+make test
 
-# Or use Docker
-make docker-up
+# Clean logs
+make clean
 ```
 
 ## What to Expect
 
-When everything is running:
+- Each peer has a prompt: `peer_1>`, `peer_2>`, etc.
+- Type messages directly (no separate client needed)
+- All peers see messages with sequence numbers
+- Check `/status` to see role (LEADER/FOLLOWER)
+- Peer 3 typically becomes leader (highest ID)
 
-1. **Logs show**:
-   - Nodes discovering each other
-   - Election process (node 3 becomes leader)
-   - Heartbeats being exchanged
+## Test Scenarios
 
-2. **Client interface**:
-   - Type messages and press Enter
-   - Messages appear with sequence numbers: `[seq=1] node_1: Hello!`
+### Test 1: Basic Messaging
+```bash
+# Terminal 1
+python -m src.peer_tui --id 1 --host 127.0.0.1 --port 6001
+peer_1> First message
 
-3. **All nodes show identical order**:
-   - Check all node terminals
-   - Same messages, same sequence numbers
+# Terminal 2  
+python -m src.peer_tui --id 2 --host 127.0.0.1 --port 6002 --seed 1:127.0.0.1:6001
+peer_2> Second message
 
-## Test Leader Failure
+# Both peers show messages in same order
+```
 
-1. Identify leader (highest node_id, typically node 3)
-2. Kill it: `Ctrl+C` (local) or `docker stop chat_node3` (Docker)
-3. Watch remaining nodes elect new leader
-4. Continue sending messages - ordering maintained!
+### Test 2: Leader Failure (P2P)
+```bash
+# Start 3 peers (peer 3 becomes leader)
+# Send messages from all peers
+# Ctrl+C on peer 3 terminal
+# Watch peer 2 become leader
+# Continue messaging from peers 1 and 2
+```
+
+### Test 3: Scalability (P2P)
+```bash
+# Run automated test
+python ScaleTestP2P.py
+
+# Or manual with many peers
+# Start 10 peers connecting to peer 1
+for i in {2..10}; do
+  python -m src.peer_tui --id $i --host 127.0.0.1 --port 600$i --seed 1:127.0.0.1:6001 &
+done
+```
 
 ## Troubleshooting
 
-**Nodes won't connect?**
-- For local: Use `127.0.0.1` instead of hostnames in configs
-- For Docker: Check `docker network ls` and container names
+**Peers won't connect?**
+- Ensure first peer (bootstrap) is running before starting others
+- Use `127.0.0.1` for local testing
+- Check ports aren't already in use: `lsof -i :6001`
+
+**No leader elected?**
+- Check logs for election messages
+- Verify peer IDs are unique
+- Ensure network connectivity between peers
 
 **Port in use?**
-- Change ports in config files
-- Or kill existing process: `lsof -i :5001`
+- Change ports: `--port 6011`, `--port 6012`, etc.
+- Or kill existing process: `kill -9 <PID>`
 
 **Need help?**
 - Check full `README.md` for detailed docs
+- View `P2P_README.md` for P2P-specific info
 - Run tests: `pytest tests/ -v`
-- View logs carefully - they're very informative!
+- Logs are very informative!
 
 ## Next Steps
 
-- Read `README.md` for architecture details
-- Try killing/restarting nodes
-- Run the test suite
+- Read `P2P_README.md` for P2P architecture details
+- Read `README.md` for client-server mode
+- Try killing/restarting peers
+- Run the test suite: `pytest tests/ -v`
+- Test with more peers (10, 20, 50...)
 - Explore the code in `src/`
-- Check `deploy/k8s/README-k8s.md` for Kubernetes deployment
 
 Enjoy exploring distributed systems!
 
